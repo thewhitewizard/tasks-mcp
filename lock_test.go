@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
@@ -30,7 +31,7 @@ func TestFileLock_Exclusion(t *testing.T) {
 		t.Errorf("lock file = %q, want it to hold this process's PID", content)
 	}
 
-	if _, err := (&fileLock{path: path, timeout: 50 * time.Millisecond}).acquire(); err == nil || !strings.Contains(err.Error(), "timed out") {
+	if _, err := (&fileLock{path: path, timeout: 50 * time.Millisecond}).acquire(); !errors.Is(err, ErrLockTimeout) {
 		t.Errorf("acquire while held: error = %v, want a timeout", err)
 	}
 
@@ -60,11 +61,11 @@ func leftoverLock(t *testing.T, path string, age time.Duration) {
 func TestFileLock_Stale(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a Lock untouched for 31 seconds is taken over", func(t *testing.T) {
+	t.Run("a Lock older than the stale delay is taken over", func(t *testing.T) {
 		t.Parallel()
 
 		path := lockPath(t)
-		leftoverLock(t, path, 31*time.Second)
+		leftoverLock(t, path, lockStaleAfter+time.Second)
 		release, err := (&fileLock{path: path, timeout: time.Second}).acquire()
 		if err != nil {
 			t.Fatalf("acquire: %v", err)
@@ -75,11 +76,11 @@ func TestFileLock_Stale(t *testing.T) {
 		}
 	})
 
-	t.Run("a Lock of 5 seconds is still held", func(t *testing.T) {
+	t.Run("a recent Lock is still held", func(t *testing.T) {
 		t.Parallel()
 
 		path := lockPath(t)
-		leftoverLock(t, path, 5*time.Second)
+		leftoverLock(t, path, lockStaleAfter/2)
 		if _, err := (&fileLock{path: path, timeout: 50 * time.Millisecond}).acquire(); err == nil {
 			t.Error("acquire took over a Lock that is not stale")
 		}
@@ -89,13 +90,11 @@ func TestFileLock_Stale(t *testing.T) {
 		t.Parallel()
 
 		path := lockPath(t)
-		leftoverLock(t, path, time.Minute)
+		leftoverLock(t, path, 2*lockStaleAfter)
 		var inside, overlaps atomic.Int32
 		var wg sync.WaitGroup
 		for range 8 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				release, err := (&fileLock{path: path, timeout: 10 * time.Second}).acquire()
 				if err != nil {
 					t.Errorf("acquire: %v", err)
@@ -107,7 +106,7 @@ func TestFileLock_Stale(t *testing.T) {
 				time.Sleep(5 * time.Millisecond)
 				inside.Add(-1)
 				release()
-			}()
+			})
 		}
 		wg.Wait()
 		if overlaps.Load() != 0 {
@@ -120,18 +119,17 @@ func TestStore_ConcurrentWriters(t *testing.T) {
 	t.Parallel()
 
 	path := filepath.Join(t.TempDir(), "tasks.json")
+	task := sampleTask(t, "Task", "") // built here: t.Fatal must not run in a goroutine
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() { // each writer has its own store, like separate processes
-			defer wg.Done()
+		wg.Go(func() { // each writer has its own store, like separate processes
 			s := newJSONStore(path, 100, 20*time.Second)
 			for range 10 {
-				if _, err := s.CreateTask(sampleTask(t, "Task", "")); err != nil {
+				if _, err := s.CreateTask(task); err != nil {
 					t.Errorf("CreateTask: %v", err)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	assertTaskCount(t, path, 80)
@@ -173,17 +171,20 @@ func TestStore_ConcurrentProcesses(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "tasks.json")
 	var children []*exec.Cmd
-	for range 3 {
+	outputs := make([]*bytes.Buffer, 3)
+	for i := range outputs {
 		cmd := exec.Command(os.Args[0], "-test.run=^TestHelperWriter$") //nolint:gosec // re-runs this test binary
 		cmd.Env = append(os.Environ(), "TASKS_TEST_DATA_FILE="+path)
+		outputs[i] = &bytes.Buffer{}
+		cmd.Stdout, cmd.Stderr = outputs[i], outputs[i]
 		if err := cmd.Start(); err != nil {
 			t.Fatal(err)
 		}
 		children = append(children, cmd)
 	}
-	for _, cmd := range children {
+	for i, cmd := range children {
 		if err := cmd.Wait(); err != nil {
-			t.Errorf("writer process: %v", err)
+			t.Errorf("writer process: %v\n%s", err, outputs[i])
 		}
 	}
 	assertTaskCount(t, path, 30)
@@ -199,7 +200,7 @@ func TestStore_WriteWhileLocked(t *testing.T) {
 	}
 	defer release()
 
-	if _, err := s.CreateTask(sampleTask(t, "Task", "")); err == nil || !strings.Contains(err.Error(), "timed out") {
+	if _, err := s.CreateTask(sampleTask(t, "Task", "")); !errors.Is(err, ErrLockTimeout) {
 		t.Errorf("CreateTask while another process writes: error = %v, want a timeout", err)
 	}
 	if _, err := os.Stat(s.path); !errors.Is(err, os.ErrNotExist) {
@@ -207,5 +208,26 @@ func TestStore_WriteWhileLocked(t *testing.T) {
 	}
 	if _, err := s.ListTasks(); err != nil {
 		t.Errorf("a read was blocked by the Lock: %v", err)
+	}
+}
+
+func TestFileLock_ReleaseTwice(t *testing.T) {
+	t.Parallel()
+
+	l := &fileLock{path: lockPath(t), timeout: time.Second}
+	first, err := l.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first()
+	second, err := l.acquire()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second()
+
+	first() // a second call must not remove the Lock somebody else now holds
+	if _, err := os.Stat(l.path); err != nil {
+		t.Errorf("the second Lock is gone after the first was released again: %v", err)
 	}
 }
