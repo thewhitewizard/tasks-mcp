@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -93,8 +94,8 @@ func newTask(in TaskInput, now time.Time) (Task, error) {
 		return Task{}, err
 	}
 	if in.Due != "" {
-		if _, err := time.Parse(time.DateOnly, in.Due); err != nil {
-			return Task{}, errors.New("due must be a real date written YYYY-MM-DD")
+		if err := parseDue(in.Due); err != nil {
+			return Task{}, err
 		}
 	}
 	tags, err := cleanTags(in.Tags)
@@ -219,4 +220,81 @@ func newID(prefix string) string {
 	b := make([]byte, 5)
 	_, _ = rand.Read(b) // never fails since Go 1.24: it crashes the program instead
 	return prefix + idEncoding.EncodeToString(b)[:6]
+}
+
+// parseDue checks that s is a real day written YYYY-MM-DD.
+func parseDue(s string) error {
+	if _, err := time.Parse(time.DateOnly, s); err != nil {
+		return errors.New("due must be a real date written YYYY-MM-DD")
+	}
+	return nil
+}
+
+// TaskUpdate is a partial change to a Task: a nil field is left alone. An empty
+// string clears Notes, Due and Project; Tags replace the old ones (empty clears
+// them); Title, Status and Priority cannot be cleared.
+type TaskUpdate struct {
+	Title, Notes, Status, Priority, Due, Project *string
+	Tags                                         []string
+}
+
+// isEmpty reports whether u changes nothing at all.
+func (u TaskUpdate) isEmpty() bool {
+	return u.Title == nil && u.Notes == nil && u.Status == nil && u.Priority == nil && u.Due == nil && u.Project == nil && u.Tags == nil
+}
+
+// apply validates u and changes t as it says. UpdatedAt moves only when
+// something actually changed. A Project is not checked here: the Store does.
+func (u TaskUpdate) apply(t *Task, now time.Time) error {
+	before := *t
+	before.Tags = slices.Clone(t.Tags)
+	var err error
+	if u.Title != nil {
+		if t.Title, err = cleanText("title", *u.Title, maxTitleLen, false, true); err != nil {
+			return err
+		}
+	}
+	if u.Notes != nil {
+		if t.Notes, err = cleanText("notes", *u.Notes, maxNotesLen, true, false); err != nil {
+			return err
+		}
+	}
+	if u.Priority != nil {
+		if *u.Priority == "" {
+			return errors.New("priority cannot be cleared")
+		}
+		if t.Priority, err = parseEnum("priority", *u.Priority, PriorityNormal, PriorityLow, PriorityNormal, PriorityHigh); err != nil {
+			return err
+		}
+	}
+	if u.Due != nil {
+		if *u.Due != "" {
+			if err := parseDue(*u.Due); err != nil {
+				return err
+			}
+		}
+		t.Due = *u.Due
+	}
+	if u.Project != nil {
+		t.Project = normalizeID(*u.Project)
+	}
+	if u.Tags != nil {
+		if t.Tags, err = cleanTags(u.Tags); err != nil {
+			return err
+		}
+	}
+	if u.Status != nil {
+		if *u.Status == "" {
+			return errors.New("status cannot be cleared")
+		}
+		status, err := parseEnum("status", *u.Status, StatusTodo, StatusTodo, StatusDoing, StatusDone)
+		if err != nil {
+			return err
+		}
+		t.setStatus(status, now)
+	}
+	if !reflect.DeepEqual(*t, before) {
+		t.UpdatedAt = now
+	}
+	return nil
 }
