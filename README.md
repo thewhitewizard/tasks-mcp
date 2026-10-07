@@ -2,7 +2,7 @@
 
 Serveur MCP (transport stdio) qui donne à un assistant IA un gestionnaire de tâches et de projets simple, pour un seul utilisateur. Les données sont stockées dans un fichier JSON. Le serveur n'utilise pas le réseau.
 
-> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects`, `list_tasks` et `get_task` (voir les issues du dépôt pour la suite).
+> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects`, `list_tasks` et `get_task`, et d'écriture `create_project` et `add_task` (voir les issues du dépôt pour la suite).
 
 ## Compilation
 
@@ -42,7 +42,7 @@ Plusieurs processus `tasks-mcp` peuvent écrire le même fichier de données : c
 
 ## Outils
 
-Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`. Les descriptions destinées à l'assistant sont en anglais.
+Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`. Les horodatages sont écrits dans le fuseau de la configuration. Les descriptions destinées à l'assistant sont en anglais.
 
 ### `list_projects`
 
@@ -63,3 +63,20 @@ Les filtres se combinent (ET). Réponse : `{"tasks":[…],"truncated":true}` ; `
 ### `get_task`
 
 Paramètre obligatoire `id` (`t_` + 6 caractères ; majuscules et espaces autour acceptés). Réponse : `{"task":{…}}` avec tous les champs, `notes` comprises (omises quand elles sont vides). Erreurs : `id is required` si absent, `id must be text` si ce n'est pas du texte, et une erreur qui renvoie vers `list_tasks` si aucune tâche n'a cet id.
+
+### `create_project`
+
+Paramètres : `name` (obligatoire, 100 caractères au plus) et `description` (500 au plus). Réponse : `{"project":{…}}`, le projet créé. Les noms sont uniques sans tenir compte de la casse : un doublon donne une erreur qui contient l'id du projet existant. 200 projets au plus.
+
+### `add_task`
+
+| Paramètre | Rôle |
+|---|---|
+| `title` | Obligatoire, 200 caractères au plus, une seule ligne. |
+| `notes` | 2000 caractères au plus ; les sauts de ligne sont conservés. |
+| `project` | Id d'un projet existant (`p_` + 6 caractères, majuscules acceptées). |
+| `due` | Jour `AAAA-MM-JJ` (pas d'heure). |
+| `priority` | `low`, `normal` (défaut) ou `high`. |
+| `tags` | Liste de textes : 10 au plus, 30 caractères chacun ; mis en minuscules, sans doublon. |
+
+La tâche est créée `todo`. Réponse : `{"task":{…}}`, la tâche créée avec son id. Les caractères de contrôle et invisibles sont retirés des textes. Au-delà de `max_tasks`, l'ajout est refusé.

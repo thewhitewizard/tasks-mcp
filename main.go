@@ -64,7 +64,7 @@ func run(args []string, getenv func(string) string, stderr io.Writer, serve func
 	logger.Printf("starting %s, timezone %s", version, cfg.Timezone)
 
 	store := newJSONStore(cfg.DataFile, cfg.MaxTasks, time.Duration(cfg.LockTimeoutSeconds)*time.Second)
-	if err := serve(newServer(cfg, store)); err != nil {
+	if err := serve(newServer(cfg, store, time.Now)); err != nil {
 		logger.Printf("server stopped: %v", err)
 		return 1
 	}
