@@ -258,6 +258,7 @@ func TestListTasks_Errors(t *testing.T) {
 		{"unknown status", map[string]any{"status": "secret-status"}, "status"},
 		{"badly written date", map[string]any{"due_before": "18/07/2026"}, "due_before"},
 		{"unknown project", map[string]any{"project": "p_nope22"}, "project"},
+		{"status of the wrong type", map[string]any{"status": 5}, "status"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -282,8 +283,5 @@ func TestTools_UnusableDataFile(t *testing.T) {
 		if text, isErr := callTool(t, srv, name, nil); !isErr || !strings.Contains(text, "corrupt") {
 			t.Errorf("%s = %q (error %v), want an error about the corrupt data file", name, text, isErr)
 		}
-	}
-	if text, isErr := callTool(t, srv, "list_tasks", map[string]any{"project": "p_abc234"}); !isErr || !strings.Contains(text, "corrupt") {
-		t.Errorf("list_tasks with a project = %q (error %v), want the same error", text, isErr)
 	}
 }

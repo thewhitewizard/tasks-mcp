@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,11 +25,11 @@ func newServer(cfg Config, store Store) *server.MCPServer {
 	), h.listProjects)
 	s.AddTool(mcp.NewTool("list_tasks", readOnly(),
 		mcp.WithDescription("List tasks, open ones first, then by due date (earliest first, no due date last), priority (high first) and creation. "+
-			"Filters combine (AND). By default done tasks are left out. Tasks come without their notes. "+
-			"At most "+strconv.Itoa(cfg.MaxResults)+" tasks are returned; `truncated` is true when there were more, so narrow the filters. "+
-			"Example: list_tasks with due_before 2026-07-20 gives what is due by that day, that day included."),
+			"Filters combine (AND). By default done tasks are left out. Notes are not included. "+
+			"At most "+strconv.Itoa(cfg.MaxResults)+" tasks are returned; `truncated` is true when there were more (it is absent otherwise), so narrow the filters. "+
+			"Example answer: {\"tasks\":[{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",\"status\":\"todo\",\"priority\":\"high\",\"due\":\"2026-07-18\",\"tags\":[\"home\"],...}]}. due_before 2026-07-20 gives what is due by that day, that day included."),
 		mcp.WithString("project", mcp.Description("Only this project: its id from list_projects (p_ followed by 6 characters).")),
-		mcp.WithString("status", mcp.Enum(string(StatusTodo), string(StatusDoing), string(StatusDone)), mcp.Description("Only this status. Asking for done lists done tasks without include_done.")),
+		mcp.WithString("status", mcp.Enum(string(StatusTodo), string(StatusDoing), string(StatusDone)), mcp.Description("Only this status (lowercase). done lists done tasks even without include_done.")),
 		mcp.WithString("due_before", mcp.Description("Only tasks due on or before this day, YYYY-MM-DD. Tasks without a due date are left out.")),
 		mcp.WithString("tag", mcp.Description("Only tasks with this tag (not case sensitive).")),
 		mcp.WithBoolean("include_done", mcp.Description("Also list done tasks. Default: false.")),
@@ -81,16 +82,22 @@ var (
 )
 
 func (h *handlers) listTasks(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	status, err := parseEnum("status", req.GetString("status", ""), Status(""), StatusTodo, StatusDoing, StatusDone)
+	var args [4]string // project, status, due_before, tag
+	for i, name := range []string{"project", "status", "due_before", "tag"} {
+		var err error
+		if args[i], err = stringArg(req, name); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+	status, err := parseEnum("status", args[1], Status(""), StatusTodo, StatusDoing, StatusDone)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	dueBefore := req.GetString("due_before", "")
+	dueBefore := args[2]
 	if _, err := time.Parse(time.DateOnly, dueBefore); dueBefore != "" && err != nil {
 		return mcp.NewToolResultError("due_before must be a real date written YYYY-MM-DD"), nil
 	}
-	project := normalizeID(req.GetString("project", ""))
-	tag := strings.ToLower(strings.TrimSpace(req.GetString("tag", "")))
+	project, tag := normalizeID(args[0]), strings.ToLower(args[3])
 	includeDone := req.GetBool("include_done", false)
 
 	if project != "" {
@@ -117,7 +124,7 @@ func (h *handlers) listTasks(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 			status == "" && !includeDone && task.Status == StatusDone,
 			project != "" && task.Project != project,
 			dueBefore != "" && (task.Due == "" || task.Due > dueBefore),
-			tag != "" && !slices.Contains(task.Tags, tag):
+			tag != "" && !slices.ContainsFunc(task.Tags, func(t string) bool { return strings.EqualFold(t, tag) }):
 			continue
 		}
 		task.Notes = "" // the list leaves the notes out
@@ -148,4 +155,19 @@ func dueKey(t Task) string {
 		return "~"
 	}
 	return t.Due
+}
+
+// stringArg returns the text argument name, trimmed, or "" when it is absent.
+// mcp-go's GetString would take an argument of another type for an absent one,
+// and the filter would silently not apply.
+func stringArg(req mcp.CallToolRequest, name string) (string, error) {
+	v, given := req.GetArguments()[name]
+	if !given {
+		return "", nil
+	}
+	s, isText := v.(string)
+	if !isText {
+		return "", errors.New(name + " must be text")
+	}
+	return strings.TrimSpace(s), nil
 }

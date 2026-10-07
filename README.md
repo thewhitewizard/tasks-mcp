@@ -42,7 +42,7 @@ Plusieurs processus `tasks-mcp` peuvent écrire le même fichier de données : c
 
 ## Outils
 
-Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans jamais citer de contenu de tâche. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`. Les descriptions destinées à l'assistant sont en anglais.
+Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`. Les descriptions destinées à l'assistant sont en anglais.
 
 ### `list_projects`
 
