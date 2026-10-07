@@ -303,7 +303,7 @@ func TestGetTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report := all[0] // "write report", the only seeded task with notes
+	report := all[slices.IndexFunc(all, func(task Task) bool { return task.Title == "write report" })] // the only seeded task with notes
 
 	text, isErr := callTool(t, srv, "get_task", map[string]any{"id": strings.ToUpper(report.ID)})
 	var got struct {

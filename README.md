@@ -62,4 +62,4 @@ Les filtres se combinent (ET). Réponse : `{"tasks":[…],"truncated":true}` ; `
 
 ### `get_task`
 
-Paramètre obligatoire `id` (`t_` + 6 caractères, majuscules acceptées). Réponse : `{"task":{…}}` avec tous les champs, `notes` comprises. Erreurs : `id is required` si absent, `id must be text` si ce n'est pas du texte, et une erreur qui renvoie vers `list_tasks` si aucune tâche n'a cet id.
+Paramètre obligatoire `id` (`t_` + 6 caractères ; majuscules et espaces autour acceptés). Réponse : `{"task":{…}}` avec tous les champs, `notes` comprises (omises quand elles sont vides). Erreurs : `id is required` si absent, `id must be text` si ce n'est pas du texte, et une erreur qui renvoie vers `list_tasks` si aucune tâche n'a cet id.
