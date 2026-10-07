@@ -235,8 +235,8 @@ func TestStore_WriteFailure(t *testing.T) {
 
 	s := newJSONStore(filepath.Join(t.TempDir(), "missing", "tasks.json"), 3, time.Second)
 	got, err := s.CreateProject(Project{Name: "Home"})
-	if err == nil || got.ID != "" {
-		t.Errorf("CreateProject = %+v (%v), want a zero Project and an error", got, err)
+	if err == nil || got.ID != "" || strings.Contains(err.Error(), "missing") {
+		t.Errorf("CreateProject = %+v (%v), want a zero Project and an error without the path", got, err)
 	}
 }
 

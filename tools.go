@@ -21,7 +21,7 @@ func newServer(cfg Config, store Store, clock func() time.Time) *server.MCPServe
 	s := server.NewMCPServer("tasks-mcp", version, server.WithRecovery())
 	s.AddTool(mcp.NewTool("list_projects", readOnly(),
 		mcp.WithDescription("List all projects, sorted by name. Each has an id (p_ followed by 6 characters, e.g. p_k3x9aq) "+
-			"to pass as `project` to list_tasks. Example answer: {\"projects\":[{\"id\":\"p_k3x9aq\",\"name\":\"Home\",\"created_at\":\"2026-07-14T09:30:00+02:00\"}]}."),
+			"to pass as `project` to list_tasks and add_task. Example answer: {\"projects\":[{\"id\":\"p_k3x9aq\",\"name\":\"Home\",\"created_at\":\"2026-07-14T09:30:00+02:00\"}]}."),
 	), h.listProjects)
 	s.AddTool(mcp.NewTool("list_tasks", readOnly(),
 		mcp.WithDescription("List tasks, open ones first, then by due date (earliest first, no due date last), priority (high first) and creation. "+
@@ -46,7 +46,7 @@ func newServer(cfg Config, store Store, clock func() time.Time) *server.MCPServe
 		mcp.WithString("description", mcp.Description("Optional description, at most 500 characters.")),
 	), h.createProject)
 	s.AddTool(mcp.NewTool("add_task", writer(),
-		mcp.WithDescription("Add a task. It starts as todo; call list_projects first to get a project id. Returns the created task with its id (t_ followed by 6 characters), "+
+		mcp.WithDescription("Add a task. It starts as todo. To put it in a project, give that project's id (from list_projects or create_project). Returns the created task with its id (t_ followed by 6 characters), "+
 			"e.g. {\"task\":{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",\"status\":\"todo\",\"priority\":\"high\",\"due\":\"2026-07-18\",\"tags\":[\"home\"],...}}. "+
 			"There is no time of day: due is a day."),
 		mcp.WithString("title", mcp.Required(), mcp.Description("What to do, at most 200 characters, one line.")),
@@ -73,6 +73,9 @@ func hints(readOnly bool) mcp.ToolOption {
 		mcp.WithOpenWorldHintAnnotation(false)(t)
 	}
 }
+
+// unknownProject is the answer to a project id that matches nothing.
+const unknownProject = "project: no project with this id; list_projects gives the ids"
 
 // handlers are the tool handlers, with what they need.
 type handlers struct {
@@ -114,12 +117,9 @@ var (
 )
 
 func (h *handlers) listTasks(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var args [4]string // project, status, due_before, tag
-	for i, name := range []string{"project", "status", "due_before", "tag"} {
-		var err error
-		if args[i], err = stringArg(req, name); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
+	args, err := textArgs(req, "project", "status", "due_before", "tag") // project, status, due_before, tag
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
 	status, err := parseEnum("status", args[1], Status(""), StatusTodo, StatusDoing, StatusDone)
 	if err != nil {
@@ -138,7 +138,7 @@ func (h *handlers) listTasks(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if !slices.ContainsFunc(projects, func(p Project) bool { return p.ID == project }) {
-			return mcp.NewToolResultError("project: no project with this id; list_projects gives the ids"), nil
+			return mcp.NewToolResultError(unknownProject), nil
 		}
 	}
 	all, err := h.store.ListTasks()
@@ -193,8 +193,8 @@ func dueKey(t Task) string {
 // mcp-go's GetString would take an argument of another type for an absent one,
 // and the filter would silently not apply.
 func stringArg(req mcp.CallToolRequest, name string) (string, error) {
-	v, given := req.GetArguments()[name]
-	if !given {
+	v := req.GetArguments()[name]
+	if v == nil { // absent, or null: clients often send null for what they leave out
 		return "", nil
 	}
 	s, isText := v.(string)
@@ -224,10 +224,22 @@ func (h *handlers) getTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	}{task}), nil
 }
 
+// textArgs returns the text arguments names, in that order.
+func textArgs(req mcp.CallToolRequest, names ...string) ([]string, error) {
+	out := make([]string, len(names))
+	for i, name := range names {
+		var err error
+		if out[i], err = stringArg(req, name); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
 // stringsArg returns the list-of-text argument name, or nil when it is absent.
 func stringsArg(req mcp.CallToolRequest, name string) ([]string, error) {
-	v, given := req.GetArguments()[name]
-	if !given {
+	v := req.GetArguments()[name]
+	if v == nil {
 		return nil, nil
 	}
 	items, isList := v.([]any)
@@ -235,8 +247,7 @@ func stringsArg(req mcp.CallToolRequest, name string) ([]string, error) {
 	for _, item := range items {
 		s, isText := item.(string)
 		if !isText {
-			isList = false
-			break
+			return nil, errors.New(name + " must be a list of text")
 		}
 		out = append(out, s)
 	}
@@ -247,15 +258,11 @@ func stringsArg(req mcp.CallToolRequest, name string) ([]string, error) {
 }
 
 func (h *handlers) createProject(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var in ProjectInput
-	var err error
-	if in.Name, err = stringArg(req, "name"); err == nil {
-		in.Description, err = stringArg(req, "description")
-	}
+	args, err := textArgs(req, "name", "description")
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	project, err := newProject(in, h.now())
+	project, err := newProject(ProjectInput{Name: args[0], Description: args[1]}, h.now())
 	if err == nil {
 		project, err = h.store.CreateProject(project)
 	}
@@ -268,16 +275,11 @@ func (h *handlers) createProject(_ context.Context, req mcp.CallToolRequest) (*m
 }
 
 func (h *handlers) addTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var in TaskInput
-	var err error
-	for _, f := range []struct {
-		name string
-		dst  *string
-	}{{"title", &in.Title}, {"notes", &in.Notes}, {"project", &in.Project}, {"due", &in.Due}, {"priority", &in.Priority}} {
-		if *f.dst, err = stringArg(req, f.name); err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
+	args, err := textArgs(req, "title", "notes", "project", "due", "priority")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
+	in := TaskInput{Title: args[0], Notes: args[1], Project: args[2], Due: args[3], Priority: args[4]}
 	if in.Tags, err = stringsArg(req, "tags"); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
@@ -286,7 +288,7 @@ func (h *handlers) addTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 		task, err = h.store.CreateTask(task)
 	}
 	if errors.Is(err, ErrInvalidProject) {
-		return mcp.NewToolResultError("project: no project with this id; list_projects gives the ids"), nil
+		return mcp.NewToolResultError(unknownProject), nil
 	}
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil

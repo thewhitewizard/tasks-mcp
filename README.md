@@ -42,7 +42,7 @@ Plusieurs processus `tasks-mcp` peuvent écrire le même fichier de données : c
 
 ## Outils
 
-Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`. Les horodatages sont écrits dans le fuseau de la configuration. Les descriptions destinées à l'assistant sont en anglais.
+Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`. Les horodatages sont écrits dans le fuseau de la configuration. Un argument facultatif à `null` est traité comme absent ; un argument d'un autre type que celui attendu est une erreur. Les messages d'erreur ne donnent jamais le chemin du fichier de données. Les descriptions destinées à l'assistant sont en anglais.
 
 ### `list_projects`
 

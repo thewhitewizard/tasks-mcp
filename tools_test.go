@@ -374,9 +374,10 @@ func TestCreateProject(t *testing.T) {
 	}{
 		{"same name in other letters", map[string]any{"name": "HOME"}, got.Project.ID},
 		{"no name", nil, "name is required"},
-		{"name too long", map[string]any{"name": strings.Repeat("n", 101)}, "name"},
+		{"name too long", map[string]any{"name": strings.Repeat("n", 101)}, "name must be at most 100"},
 		{"name of a wrong type", map[string]any{"name": 5}, "name must be text"},
 		{"description of a wrong type", map[string]any{"name": "Work", "description": 5}, "description must be text"},
+		{"description too long", map[string]any{"name": "Work", "description": strings.Repeat("d", 501)}, "description must be at most 500"},
 	}
 	for _, tt := range tests {
 		if text, isErr := callTool(t, srv, "create_project", tt.args); !isErr || !strings.Contains(text, tt.want) {
@@ -442,6 +443,7 @@ func TestAddTask_Errors(t *testing.T) {
 		leak string // part of the input the error must not repeat
 	}{
 		{"no title", nil, "title is required", ""},
+		{"notes too long", map[string]any{"title": "t", "notes": strings.Repeat("n", 2001)}, "notes must be at most 2000", ""},
 		{"blank title", map[string]any{"title": " "}, "title is required", ""},
 		{"title of a wrong type", map[string]any{"title": 5}, "title must be text", ""},
 		{"impossible due date", map[string]any{"title": "t", "due": "2026-02-30"}, "due", "2026-02-30"},
@@ -473,5 +475,31 @@ func TestAddTask_LimitReached(t *testing.T) {
 	}
 	if text, isErr := callTool(t, srv, "add_task", map[string]any{"title": "second"}); !isErr || !strings.Contains(text, "limit") {
 		t.Errorf("add_task over max_tasks = %q (error %v), want a limit error", text, isErr)
+	}
+}
+
+func TestWriteTools_NullsAreAbsent(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, 50)
+	args := map[string]any{"title": "t", "notes": nil, "project": nil, "due": nil, "priority": nil, "tags": nil}
+	if text, isErr := callTool(t, srv, "add_task", args); isErr {
+		t.Errorf("add_task with null optional arguments = %q, want it to be accepted", text)
+	}
+	if text, isErr := callTool(t, srv, "create_project", map[string]any{"name": "Home", "description": nil}); isErr {
+		t.Errorf("create_project with a null description = %q, want it to be accepted", text)
+	}
+}
+
+func TestWriteTools_NoFilePathInErrors(t *testing.T) {
+	t.Parallel()
+
+	now := parisNow(t)
+	store := newJSONStore(filepath.Join(t.TempDir(), "secret-dir", "tasks.json"), 10, time.Second) // its directory does not exist
+	srv := newServer(Config{MaxResults: 50, Location: now.Location()}, store, now.UTC)
+	for name, args := range map[string]map[string]any{"add_task": {"title": "t"}, "create_project": {"name": "Home"}} {
+		if text, isErr := callTool(t, srv, name, args); !isErr || strings.Contains(text, "secret-dir") {
+			t.Errorf("%s = %q (error %v), want an error that does not give the path of the Data file", name, text, isErr)
+		}
 	}
 }
