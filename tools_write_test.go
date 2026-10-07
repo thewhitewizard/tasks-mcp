@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -235,5 +236,62 @@ func TestUpdateTask_NoTagsAtAllIsNotAChange(t *testing.T) {
 	_, text := f.call(t, "update_task", map[string]any{"id": bare.ID, "tags": []string{}})
 	if strings.Contains(text, updatedNow) || !strings.Contains(text, `"tags":[]`) {
 		t.Errorf("update_task = %s, want tags [] and updated_at left alone", text)
+	}
+}
+
+func TestDeleteTask(t *testing.T) {
+	t.Parallel()
+
+	f := newWriteFixture(t)
+	if _, err := f.store.CreateTask(sampleTask(t, "Keep me", "")); err != nil {
+		t.Fatal(err)
+	}
+
+	text, isErr := callTool(t, f.srv, "delete_task", map[string]any{"id": strings.ToUpper(f.task.ID)})
+	var gone struct {
+		Deleted Task `json:"deleted"`
+	}
+	if err := json.Unmarshal([]byte(text), &gone); isErr || err != nil || gone.Deleted.ID != f.task.ID || gone.Deleted.Title != "Pay rent" {
+		t.Errorf("delete_task = %q (error %v, %v), want the deleted task back under \"deleted\"", text, isErr, err)
+	}
+	if left, _ := listTasks(t, f.srv, nil); !slices.Equal(titles(left.Tasks), []string{"Keep me"}) {
+		t.Errorf("tasks left = %v, want only Keep me", titles(left.Tasks))
+	}
+	if gone.Deleted.Notes != "before the 20th" {
+		t.Errorf("deleted notes = %q, want the whole task back", gone.Deleted.Notes)
+	}
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"already deleted", map[string]any{"id": f.task.ID}, "list_tasks"},
+		{"unknown id", map[string]any{"id": "t_secret2"}, "list_tasks"},
+		{"no id", nil, "id is required"},
+		{"blank id", map[string]any{"id": "  "}, "id is required"},
+		{"id of a wrong type", map[string]any{"id": 5}, "id must be text"},
+	}
+	for _, tt := range tests {
+		if text, isErr := callTool(t, f.srv, "delete_task", tt.args); !isErr || !strings.Contains(text, tt.want) || strings.Contains(text, "secret2") {
+			t.Errorf("%s: delete_task = %q (error %v), want an error with %q, without the id", tt.name, text, isErr, tt.want)
+		}
+	}
+}
+
+func TestDeleteTask_TwoProcessesOneWins(t *testing.T) {
+	t.Parallel()
+
+	f := newWriteFixture(t)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { // each with its own store on the same file, like two processes
+			_, err := newJSONStore(f.store.path, 10, 20*time.Second).DeleteTask(f.task.ID)
+			results <- err
+		}()
+	}
+	first, second := <-results, <-results
+	if (first == nil) == (second == nil) || (first != nil && !errors.Is(first, ErrNotFound)) || (second != nil && !errors.Is(second, ErrNotFound)) {
+		t.Errorf("deletions answered %v and %v, want exactly one success and one ErrNotFound", first, second)
 	}
 }
