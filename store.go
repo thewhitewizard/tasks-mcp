@@ -72,13 +72,13 @@ func (s *jsonStore) load() (document, error) {
 		return empty, nil
 	}
 	if err != nil {
-		return document{}, fmt.Errorf("data file: %w", err)
+		return document{}, fileError("data file", err)
 	}
 	defer f.Close() //nolint:errcheck // read-only file
 
 	data, err := io.ReadAll(io.LimitReader(f, maxFileSize+1))
 	if err != nil {
-		return document{}, fmt.Errorf("data file: %w", err)
+		return document{}, fileError("data file", err)
 	}
 	if len(data) > maxFileSize {
 		return document{}, fmt.Errorf("data file is larger than %d MiB: left untouched", maxFileSize>>20)
@@ -107,11 +107,11 @@ func (s *jsonStore) load() (document, error) {
 func (s *jsonStore) save(doc document) (err error) {
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return fmt.Errorf("data file: %w", err)
+		return fileError("data file", err)
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".tasks-*.tmp") // created 0600
 	if err != nil {
-		return fmt.Errorf("data file: %w", err)
+		return fileError("data file", err)
 	}
 	defer func() {
 		if err != nil {
@@ -120,16 +120,16 @@ func (s *jsonStore) save(doc document) (err error) {
 		}
 	}()
 	if _, err = tmp.Write(data); err != nil {
-		return fmt.Errorf("data file: %w", err)
+		return fileError("data file", err)
 	}
 	if err = tmp.Sync(); err != nil {
-		return fmt.Errorf("data file: %w", err)
+		return fileError("data file", err)
 	}
 	if err = tmp.Close(); err != nil {
-		return fmt.Errorf("data file: %w", err)
+		return fileError("data file", err)
 	}
 	if err = os.Rename(tmp.Name(), s.path); err != nil {
-		return fmt.Errorf("data file: %w", err)
+		return fileError("data file", err)
 	}
 	return nil
 }
@@ -304,3 +304,13 @@ func (s *jsonStore) DeleteTask(id string) error {
 }
 
 var _ Store = (*jsonStore)(nil)
+
+// fileError describes a failed file operation without the path that the system
+// error carries: these errors reach the assistant, which has no use for where the
+// server keeps its files.
+func fileError(what string, err error) error {
+	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
+		err = pathErr.Err
+	}
+	return fmt.Errorf("%s: %w", what, err)
+}

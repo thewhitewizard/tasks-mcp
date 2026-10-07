@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -55,7 +56,8 @@ func callTool(t *testing.T, srv *server.MCPServer, name string, args map[string]
 func newTestServer(t *testing.T, maxResults int) (*server.MCPServer, *jsonStore) {
 	t.Helper()
 	store := newJSONStore(filepath.Join(t.TempDir(), "tasks.json"), 100, time.Second)
-	return newServer(Config{MaxResults: maxResults}, store), store
+	now := parisNow(t)
+	return newServer(Config{MaxResults: maxResults, Location: now.Location()}, store, now.UTC), store
 }
 
 func TestTools_List(t *testing.T) {
@@ -85,8 +87,17 @@ func TestTools_List(t *testing.T) {
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
 		a := tool.Annotations
-		if a.ReadOnly == nil || !*a.ReadOnly || a.Destructive == nil || *a.Destructive || a.OpenWorld == nil || *a.OpenWorld {
-			t.Errorf("%s: annotations = %+v, want readOnly true, destructive false, openWorld false (all explicit)", tool.Name, a)
+		writes := tool.Name == "create_project" || tool.Name == "add_task"
+		if a.ReadOnly == nil || *a.ReadOnly == writes || a.Destructive == nil || *a.Destructive || a.OpenWorld == nil || *a.OpenWorld {
+			t.Errorf("%s: annotations = %+v, want readOnly %v, destructive false, openWorld false (all explicit)", tool.Name, a, !writes)
+		}
+		if want := map[string][]string{"create_project": {"name"}, "add_task": {"title"}}[tool.Name]; want != nil && !slices.Equal(tool.InputSchema.Required, want) {
+			t.Errorf("%s required = %v, want %v", tool.Name, tool.InputSchema.Required, want)
+		}
+		if tool.Name == "add_task" {
+			if enum, _ := tool.InputSchema.Properties["priority"]["enum"].([]any); len(enum) != 3 || tool.InputSchema.Properties["tags"]["type"] != "array" {
+				t.Errorf("add_task priority enum = %v, tags = %v, want three priorities and a list", enum, tool.InputSchema.Properties["tags"])
+			}
 		}
 		if enum, _ := tool.InputSchema.Properties["status"]["enum"].([]any); tool.Name == "list_tasks" && len(enum) != 3 {
 			t.Errorf("list_tasks status enum = %v, want the three statuses", enum)
@@ -98,8 +109,8 @@ func TestTools_List(t *testing.T) {
 			t.Error("list_tasks does not point to get_task for the notes")
 		}
 	}
-	if slices.Sort(names); !slices.Equal(names, []string{"get_task", "list_projects", "list_tasks"}) {
-		t.Errorf("tools = %v, want get_task, list_projects, list_tasks", names)
+	if slices.Sort(names); !slices.Equal(names, []string{"add_task", "create_project", "get_task", "list_projects", "list_tasks"}) {
+		t.Errorf("tools = %v, want the five tools", names)
 	}
 }
 
@@ -335,5 +346,160 @@ func TestGetTask(t *testing.T) {
 	}
 	if text, isErr := callTool(t, srv, "get_task", map[string]any{"id": report.ID}); !isErr || !strings.Contains(text, "corrupt") {
 		t.Errorf("get_task on a corrupt file = %q (error %v), want the store's error", text, isErr)
+	}
+}
+
+func TestCreateProject(t *testing.T) {
+	t.Parallel()
+
+	srv, store := newTestServer(t, 50)
+	text, isErr := callTool(t, srv, "create_project", map[string]any{"name": " Home" + zwsp, "description": "Chores"})
+	var got struct {
+		Project Project `json:"project"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); isErr || err != nil {
+		t.Fatalf("create_project = %q (error %v, %v)", text, isErr, err)
+	}
+	if got.Project.Name != "Home" || got.Project.Description != "Chores" || !strings.Contains(text, `"created_at":"2026-07-14T09:30:00+02:00"`) {
+		t.Errorf("create_project = %s, want the cleaned project created at 09:30 +02:00", text)
+	}
+	if listed, _ := store.ListProjects(); len(listed) != 1 || listed[0].ID != got.Project.ID {
+		t.Errorf("projects = %v, want the created one to be saved", listed)
+	}
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"same name in other letters", map[string]any{"name": "HOME"}, got.Project.ID},
+		{"no name", nil, "name is required"},
+		{"name too long", map[string]any{"name": strings.Repeat("n", 101)}, "name must be at most 100"},
+		{"name of a wrong type", map[string]any{"name": 5}, "name must be text"},
+		{"description of a wrong type", map[string]any{"name": "Work", "description": 5}, "description must be text"},
+		{"description too long", map[string]any{"name": "Work", "description": strings.Repeat("d", 501)}, "description must be at most 500"},
+	}
+	for _, tt := range tests {
+		if text, isErr := callTool(t, srv, "create_project", tt.args); !isErr || !strings.Contains(text, tt.want) {
+			t.Errorf("%s: create_project = %q (error %v), want an error with %q", tt.name, text, isErr, tt.want)
+		}
+	}
+}
+
+func TestAddTask(t *testing.T) {
+	t.Parallel()
+
+	srv, store := newTestServer(t, 50)
+	home, err := store.CreateProject(Project{Name: "Home"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(args map[string]any) (Task, string) {
+		t.Helper()
+		text, isErr := callTool(t, srv, "add_task", args)
+		var got struct {
+			Task Task `json:"task"`
+		}
+		if err := json.Unmarshal([]byte(text), &got); isErr || err != nil {
+			t.Fatalf("add_task(%v) = %q (error %v, %v)", args, text, isErr, err)
+		}
+		return got.Task, text
+	}
+
+	minimal, text := add(map[string]any{"title": "Buy milk"})
+	if !regexp.MustCompile(`^t_[a-z2-7]{6}$`).MatchString(minimal.ID) || minimal.Status != StatusTodo || minimal.Priority != PriorityNormal ||
+		!strings.Contains(text, `"tags":[]`) || !strings.Contains(text, `"created_at":"2026-07-14T09:30:00+02:00","updated_at":"2026-07-14T09:30:00+02:00"`) {
+		t.Errorf("minimal add_task = %s, want a todo/normal task with no tags, created and updated at 09:30 +02:00", text)
+	}
+
+	full, _ := add(map[string]any{
+		"title": "Pay rent", "notes": "before the 20th", "project": strings.ToUpper(home.ID), "due": "2026-07-18",
+		"priority": "high", "tags": []string{"Home", " urgent", "home"},
+	})
+	if full.Project != home.ID || full.Due != "2026-07-18" || full.Priority != PriorityHigh || full.Notes != "before the 20th" || !slices.Equal(full.Tags, []string{"home", "urgent"}) {
+		t.Errorf("full add_task = %+v, want every field kept, the project id lowercased and the tags cleaned", full)
+	}
+
+	for _, task := range []Task{minimal, full} {
+		if saved, err := store.GetTask(task.ID); err != nil {
+			t.Errorf("task %s was not saved: %v", task.ID, err)
+		} else {
+			sameJSON(t, saved, task)
+		}
+	}
+	if listedTasks, _ := listTasks(t, srv, nil); len(listedTasks.Tasks) != 2 {
+		t.Errorf("list_tasks = %v, want both added tasks", titles(listedTasks.Tasks))
+	}
+}
+
+func TestAddTask_Errors(t *testing.T) {
+	t.Parallel()
+
+	srv, store := newTestServer(t, 50)
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+		leak string // part of the input the error must not repeat
+	}{
+		{"no title", nil, "title is required", ""},
+		{"notes too long", map[string]any{"title": "t", "notes": strings.Repeat("n", 2001)}, "notes must be at most 2000", ""},
+		{"blank title", map[string]any{"title": " "}, "title is required", ""},
+		{"title of a wrong type", map[string]any{"title": 5}, "title must be text", ""},
+		{"impossible due date", map[string]any{"title": "t", "due": "2026-02-30"}, "due", "2026-02-30"},
+		{"unknown priority", map[string]any{"title": "t", "priority": "secret-level"}, "priority", "secret-level"},
+		{"unknown project", map[string]any{"title": "t", "project": "p_secret2"}, "list_projects", "secret2"},
+		{"tags that are not a list", map[string]any{"title": "t", "tags": "home"}, "tags must be a list of text", ""},
+		{"tags with a number", map[string]any{"title": "t", "tags": []any{"home", 5}}, "tags must be a list of text", ""},
+		{"too many tags", map[string]any{"title": "t", "tags": tagsOf(11, 3)}, "tags", ""},
+	}
+	for _, tt := range tests {
+		text, isErr := callTool(t, srv, "add_task", tt.args)
+		if !isErr || !strings.Contains(text, tt.want) || (tt.leak != "" && strings.Contains(text, tt.leak)) {
+			t.Errorf("%s: add_task = %q (error %v), want an error with %q, not repeating the input", tt.name, text, isErr, tt.want)
+		}
+	}
+	if saved, _ := store.ListTasks(); len(saved) != 0 {
+		t.Errorf("%d tasks were saved by refused calls", len(saved))
+	}
+}
+
+func TestAddTask_LimitReached(t *testing.T) {
+	t.Parallel()
+
+	now := parisNow(t)
+	store := newJSONStore(filepath.Join(t.TempDir(), "tasks.json"), 1, time.Second)
+	srv := newServer(Config{MaxResults: 50, Location: now.Location()}, store, func() time.Time { return now })
+	if _, isErr := callTool(t, srv, "add_task", map[string]any{"title": "first"}); isErr {
+		t.Fatal("the first task was refused")
+	}
+	if text, isErr := callTool(t, srv, "add_task", map[string]any{"title": "second"}); !isErr || !strings.Contains(text, "limit") {
+		t.Errorf("add_task over max_tasks = %q (error %v), want a limit error", text, isErr)
+	}
+}
+
+func TestWriteTools_NullsAreAbsent(t *testing.T) {
+	t.Parallel()
+
+	srv, _ := newTestServer(t, 50)
+	args := map[string]any{"title": "t", "notes": nil, "project": nil, "due": nil, "priority": nil, "tags": nil}
+	if text, isErr := callTool(t, srv, "add_task", args); isErr {
+		t.Errorf("add_task with null optional arguments = %q, want it to be accepted", text)
+	}
+	if text, isErr := callTool(t, srv, "create_project", map[string]any{"name": "Home", "description": nil}); isErr {
+		t.Errorf("create_project with a null description = %q, want it to be accepted", text)
+	}
+}
+
+func TestWriteTools_NoFilePathInErrors(t *testing.T) {
+	t.Parallel()
+
+	now := parisNow(t)
+	store := newJSONStore(filepath.Join(t.TempDir(), "secret-dir", "tasks.json"), 10, time.Second) // its directory does not exist
+	srv := newServer(Config{MaxResults: 50, Location: now.Location()}, store, now.UTC)
+	for name, args := range map[string]map[string]any{"add_task": {"title": "t"}, "create_project": {"name": "Home"}} {
+		if text, isErr := callTool(t, srv, name, args); !isErr || strings.Contains(text, "secret-dir") {
+			t.Errorf("%s = %q (error %v), want an error that does not give the path of the Data file", name, text, isErr)
+		}
 	}
 }

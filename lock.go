@@ -36,7 +36,7 @@ func (l *fileLock) acquire() (func(), error) {
 			_, werr := fmt.Fprintf(f, "%d %s\n", os.Getpid(), time.Now().Format(time.RFC3339))
 			if cerr := errors.Join(werr, f.Close()); cerr != nil {
 				_ = os.Remove(l.path)
-				return nil, fmt.Errorf("lock: %w", cerr)
+				return nil, fileError("lock", cerr)
 			}
 			var once sync.Once
 			return func() { once.Do(func() { _ = os.Remove(l.path) }) }, nil
@@ -45,12 +45,12 @@ func (l *fileLock) acquire() (func(), error) {
 		// is deleting the Lock: wait, and report it if it lasts.
 		denied := runtime.GOOS == "windows" && errors.Is(err, fs.ErrPermission)
 		if !denied && !errors.Is(err, fs.ErrExist) {
-			return nil, fmt.Errorf("lock: %w", err)
+			return nil, fileError("lock", err)
 		}
 		l.breakIfStale()
 		if time.Now().After(deadline) {
 			if denied {
-				return nil, fmt.Errorf("lock: %w", err)
+				return nil, fileError("lock", err)
 			}
 			return nil, ErrLockTimeout
 		}
