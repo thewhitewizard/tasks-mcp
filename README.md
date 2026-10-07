@@ -17,7 +17,7 @@ Huit outils : trois de lecture, quatre d'écriture, un destructeur. Le glossaire
 | `complete_task` | Passe une tâche à `done` | écriture |
 | `delete_task` | Supprime une tâche pour de bon | **destructeur** |
 
-Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies ni donner le chemin du fichier de données. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`, sauf `delete_task`, le seul avec `destructiveHint: true`. Les horodatages sont en ISO 8601 (RFC 3339), à la seconde, dans le fuseau de la configuration. Un argument facultatif à `null` est traité comme absent ; un argument d'un autre type que celui attendu est une erreur. Les descriptions destinées à l'assistant sont en anglais.
+Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies ni donner le chemin du fichier de données. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`, sauf `delete_task`, le seul avec `destructiveHint: true`. Les horodatages sont en ISO 8601 (RFC 3339), à la seconde, dans le fuseau de la configuration. Un argument facultatif à `null` est traité comme absent ; un argument d'un autre type que celui attendu est une erreur, sauf `include_done` (booléen) qui accepte aussi `"true"` et `"false"` en texte et vaut `false` pour toute autre valeur. Les descriptions destinées à l'assistant sont en anglais.
 
 ### `list_projects`
 
@@ -47,7 +47,7 @@ Paramètres : `name` (obligatoire, 100 caractères au plus) et `description` (50
 
 | Paramètre | Rôle |
 |---|---|
-| `title` | Obligatoire, 200 caractères au plus, une seule ligne. |
+| `title` | Obligatoire, 200 caractères au plus, une seule ligne (les sauts de ligne deviennent des espaces). |
 | `notes` | 2000 caractères au plus ; les sauts de ligne sont conservés. |
 | `project` | Id d'un projet existant (`p_` + 6 caractères, majuscules acceptées). |
 | `due` | Jour `AAAA-MM-JJ` (pas d'heure). |
@@ -77,7 +77,7 @@ Paramètre : `id` (`t_` + 6 caractères, majuscules et espaces autour acceptés)
 
 ## Compilation
 
-Binaire statique, sans CGO :
+Binaire statique, sans CGO. Il faut Go 1.27 ou plus (voir `go.mod`).
 
 ```sh
 # Pour le poste de développement :
@@ -105,23 +105,23 @@ Fichier JSON strict (un champ inconnu est refusé). Voir `config.example.json`.
 |---|---|---|---|
 | `data_file` | oui | | Chemin **absolu** du fichier de données (sous Windows, `C:\...` ; l'exemple `/var/lib/...` vise Linux). |
 | `timezone` | oui | | Fuseau IANA (ex. `Europe/Paris`) ; `Local` est refusé. |
-| `max_tasks` | non | 5000 | Nombre maximal de tâches. |
-| `max_results` | non | 50 | Nombre maximal de tâches renvoyées par `list_tasks`. |
-| `lock_timeout_seconds` | non | 5 | Attente maximale du verrou d'écriture ; doit être inférieur à 30. |
+| `max_tasks` | non | 5000 | Nombre maximal de tâches (supérieur à 0). |
+| `max_results` | non | 50 | Nombre maximal de tâches renvoyées par `list_tasks` (supérieur à 0). |
+| `lock_timeout_seconds` | non | 5 | Attente maximale du verrou d'écriture ; supérieur à 0 et inférieur à 30. |
 
-Au démarrage, le dossier du fichier de données est créé s'il manque (droits 0700), puis le serveur vérifie qu'il peut y écrire en y créant puis supprimant un fichier temporaire. Sinon il s'arrête avec un message sur stderr. Le fichier de données lui-même n'est créé qu'au premier ajout (droits 0600).
+Au démarrage, le dossier du fichier de données est créé s'il manque (droits 0700), puis le serveur vérifie qu'il peut y écrire en y créant puis supprimant un fichier `.write-check-*`. Sinon il s'arrête avec un message sur stderr. Le fichier de données lui-même n'est créé qu'à la première écriture réussie, ajout d'un projet ou d'une tâche (droits 0600).
 
-**Le dossier du fichier de données doit être inscriptible, pas seulement le fichier** : le serveur y crée, le temps d'une écriture, un fichier temporaire, le verrou `<data_file>.lock` et sa garde `<data_file>.lock.break`.
+**Le dossier du fichier de données doit être inscriptible, pas seulement le fichier** : à chaque écriture, le serveur y crée un fichier temporaire `.tasks-*.tmp` (renommé ensuite sur le fichier de données) et le verrou `<data_file>.lock` ; la garde `<data_file>.lock.break` n'apparaît que le temps de reprendre un verrou périmé.
 
 ### Conteneur minimal
 
-Le binaire n'embarque **pas** la base des fuseaux horaires. Dans un conteneur sans `/usr/share/zoneinfo` (image `scratch`), `timezone` ne peut pas être chargé et le serveur refuse de démarrer. Deux solutions : copier le dossier `zoneinfo` dans l'image, ou fournir l'archive de Go et la désigner par `ZONEINFO=/chemin/zoneinfo.zip` (le fichier `$(go env GOROOT)/lib/time/zoneinfo.zip`).
+Le binaire n'embarque **pas**, par défaut, la base des fuseaux horaires. Dans un conteneur sans `/usr/share/zoneinfo` (image `scratch`), `timezone` ne peut pas être chargé et le serveur refuse de démarrer (`config: timezone: unknown time zone …`). Trois solutions : copier le dossier `zoneinfo` dans l'image ; fournir l'archive de Go et la désigner par `ZONEINFO=/chemin/zoneinfo.zip` (le fichier `$(go env GOROOT)/lib/time/zoneinfo.zip`, à copier depuis la machine de compilation) ; ou compiler avec `-tags timetzdata`, qui embarque la base dans le binaire (environ 400 Ko de plus ; compilation vérifiée, effet en conteneur à vérifier).
 
 ## Sécurité et robustesse
 
 - Aucun outil n'accepte un chemin de fichier : le fichier de données vient **uniquement** de la configuration. Aucun accès réseau, aucune télémétrie.
-- Le texte des tâches vient de l'utilisateur ou de l'assistant, qui peut recopier du texte venu d'ailleurs : les caractères de contrôle et les caractères invisibles sont supprimés. Limites : titre 200 caractères, notes 2000, 10 tags de 30 caractères, nom de projet 100, description 500, 200 projets, `max_tasks` tâches, fichier de 16 Mio au plus.
-- Aucun titre ni note dans les logs ni dans les messages d'erreur ; les erreurs système ne donnent pas le chemin du fichier.
+- Le texte des tâches vient de l'utilisateur ou de l'assistant, qui peut recopier du texte venu d'ailleurs : les caractères de contrôle et les caractères invisibles sont supprimés. Limites : titre 200 caractères, notes 2000, 10 tags de 30 caractères, nom de projet 100, description 500, 200 projets, `max_tasks` tâches. Un fichier de plus de 16 Mio **n'est plus lu** (la limite s'applique à la lecture, pas à l'écriture).
+- Aucun titre ni note dans les logs ni dans les messages d'erreur ; les erreurs renvoyées par les outils ne donnent pas le chemin du fichier (les messages de démarrage, sur stderr, nomment le dossier de données).
 - Le fichier de données n'est **jamais écrasé** s'il est vide, corrompu, trop gros, d'une autre version de schéma (`schema_version` ≠ 1) ou avec un champ inconnu : l'outil répond par une erreur claire et le fichier reste intact.
 - Écriture atomique : fichier temporaire dans le même dossier, `fsync`, puis `rename`.
 
@@ -194,23 +194,24 @@ Cette commande lance le serveur, fait la poignée de main MCP, liste les outils,
   sleep 1
   printf '%s\n' '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_project","arguments":{"name":"Home"}}}'
   sleep 1
-  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"add_task","arguments":{"title":"Pay rent","due":"2026-07-18","priority":"high"}}}'
+  printf '%s\n' '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"add_task","arguments":{"title":"Pay rent","due":"2027-01-15","priority":"high"}}}'
   sleep 1
   printf '%s\n' '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"list_tasks","arguments":{}}}'
   sleep 2; } | ./tasks-mcp --config config.json
 ```
 
-Les réponses (sur stdout, une par ligne) se repèrent par leur `id`. Le message de démarrage est sur stderr. Les `sleep` entre les appels laissent chaque écriture se terminer avant la suivante : un vrai client attend la réponse. Utilisez un `config.json` dont `data_file` pointe vers un dossier de test, pas vers vos vraies données.
+Les réponses (sur stdout, une par ligne) se repèrent par leur `id` : l'`id` 1 donne `serverInfo` (`tasks-mcp` et sa version), l'`id` 2 les huit outils, les `id` 3 et 4 le projet et la tâche créés (`{"project":{…}}`, `{"task":{…}}`, sans `isError`), l'`id` 5 la liste d'une tâche. Le message de démarrage (`tasks-mcp: starting v0.1.0, timezone Europe/Paris`) est sur stderr. Les `sleep` entre les appels laissent chaque écriture se terminer avant la suivante : un vrai client attend la réponse. Utilisez un `config.json` dont `data_file` pointe vers un dossier de test, pas vers vos vraies données.
 
 ## Limites connues
 
 - **Un seul utilisateur**, sans authentification ni droits. Pas de sous-tâches, de récurrence, de pièces jointes ni d'heure d'échéance (`due` est un jour).
 - **Pas de recherche par texte** : `list_tasks` filtre par projet, statut, échéance et tag, pas par mot du titre ou des notes. Au-delà de `max_results` tâches correspondantes, il n'y a pas de page suivante : `truncated` invite à resserrer les filtres.
 - **Projets figés** : on peut en créer, pas les renommer, les archiver ni les supprimer.
-- Chaque opération lit ou réécrit **tout le fichier** (5000 tâches au plus : environ 2,3 Mo avec des notes de 100 caractères, une lecture complète en une vingtaine de millisecondes, une écriture en une trentaine, mesurées sous Windows) : suffisant pour un usage personnel, pas pour du volume.
+- Chaque opération lit ou réécrit **tout le fichier** (5000 tâches : environ 2,3 Mo avec des notes de 100 caractères, une lecture complète en 16 ms environ, une écriture en 30 ms environ, mesurées sous Windows) : suffisant pour un usage personnel, pas pour du volume. Un fichier saturé de texte non ASCII (notes de 2000 caractères sur 5000 tâches) pourrait dépasser la limite de lecture de 16 Mio : baisser alors `max_tasks`.
 - Le verrou d'écriture repose sur l'âge d'un fichier (30 secondes) : un saut d'horloge, ou un processus bloqué plus de 30 secondes au milieu d'une écriture, peut faire se chevaucher deux écritures. Après un arrêt brutal, les écritures attendent jusqu'à 30 secondes. Voir l'ADR.
 - Sous Windows, un lecteur qui tient le fichier de données ouvert peut faire échouer le `rename` final d'une écriture. La cible de déploiement est Linux (la CI y exécute les tests, `-race` compris).
-- Le binaire n'embarque pas la base des fuseaux horaires (voir « Conteneur minimal »).
+- Le binaire n'embarque pas la base des fuseaux horaires par défaut (voir « Conteneur minimal »).
+- Pas d'option `--version` : la version (`-ldflags "-X main.version=…"`, `dev` sinon) n'apparaît que dans le message de démarrage sur stderr.
 
 ## Pour aller plus loin : base de données, API, interface
 

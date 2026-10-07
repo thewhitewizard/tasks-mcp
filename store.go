@@ -318,6 +318,8 @@ var _ Store = (*jsonStore)(nil)
 func fileError(what string, err error) error {
 	if pathErr, ok := errors.AsType[*fs.PathError](err); ok {
 		err = pathErr.Err
+	} else if linkErr, ok := errors.AsType[*os.LinkError](err); ok { // a failed rename names two paths
+		err = linkErr.Err
 	}
 	return fmt.Errorf("%s: %w", what, err)
 }
