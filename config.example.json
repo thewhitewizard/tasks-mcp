@@ -1,0 +1,7 @@
+{
+  "data_file": "/var/lib/tasks-mcp/tasks.json",
+  "timezone": "Europe/Paris",
+  "max_tasks": 5000,
+  "max_results": 50,
+  "lock_timeout_seconds": 5
+}

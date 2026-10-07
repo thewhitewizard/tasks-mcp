@@ -1,0 +1,6 @@
+tasks-mcp
+tasks-mcp.exe
+*.out
+config.json
+tasks.json
+*.lock
