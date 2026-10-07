@@ -70,7 +70,7 @@ func TestLoadConfig_Invalid(t *testing.T) {
 		content string
 		want    string
 	}{
-		{"not JSON", `nope`, "parse config"},
+		{"not JSON", `nope`, "config: parse"},
 		{"data after the object", with("") + `{}`, "unexpected data"},
 		{"unknown field", with(`, "max_task": 3`), "max_task"},
 		{"missing data_file", `{"timezone": "Europe/Paris"}`, "data_file"},
@@ -100,7 +100,7 @@ func TestLoadConfig_AbsentFile(t *testing.T) {
 	t.Parallel()
 
 	_, err := loadConfig(filepath.Join(t.TempDir(), "absent.json"))
-	if err == nil || !strings.Contains(err.Error(), "read config") {
+	if err == nil || !strings.Contains(err.Error(), "config: read") {
 		t.Errorf("loadConfig error = %v, want a read error", err)
 	}
 }

@@ -33,15 +33,15 @@ func loadConfig(path string) (Config, error) {
 
 	data, err := os.ReadFile(path) //nolint:gosec // the configuration path is chosen by the user, by design
 	if err != nil {
-		return Config{}, fmt.Errorf("read config: %w", err)
+		return Config{}, fmt.Errorf("config: read: %w", err)
 	}
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&cfg); err != nil {
-		return Config{}, fmt.Errorf("parse config: %w", err)
+		return Config{}, fmt.Errorf("config: parse: %w", err)
 	}
 	if dec.More() {
-		return Config{}, errors.New("parse config: unexpected data after the JSON object")
+		return Config{}, errors.New("config: parse: unexpected data after the JSON object")
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -64,13 +64,16 @@ func (c *Config) validate() error {
 	}
 	c.Location = loc
 
-	for name, v := range map[string]int{
-		"max_tasks":            c.MaxTasks,
-		"max_results":          c.MaxResults,
-		"lock_timeout_seconds": c.LockTimeoutSeconds,
+	for _, f := range []struct {
+		name  string
+		value int
+	}{
+		{"max_tasks", c.MaxTasks},
+		{"max_results", c.MaxResults},
+		{"lock_timeout_seconds", c.LockTimeoutSeconds},
 	} {
-		if v <= 0 {
-			return fmt.Errorf("config: %s must be greater than 0", name)
+		if f.value <= 0 {
+			return fmt.Errorf("config: %s must be greater than 0", f.name)
 		}
 	}
 	if time.Duration(c.LockTimeoutSeconds)*time.Second >= lockStaleAfter {

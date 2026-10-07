@@ -69,7 +69,7 @@ func TestRun(t *testing.T) {
 		{name: "no config path", wantCode: 2, wantStderr: "TASKS_MCP_CONFIG"},
 		{name: "unknown flag", args: []string{"--nope"}, wantCode: 2, wantStderr: "nope"},
 		{name: "help", args: []string{"-h"}, wantStderr: "-config"},
-		{name: "absent config file", args: []string{"--config", absent}, wantCode: 1, wantStderr: "read config"},
+		{name: "absent config file", args: []string{"--config", absent}, wantCode: 1, wantStderr: "config: read"},
 		{name: "invalid config", args: []string{"--config", invalid}, wantCode: 1, wantStderr: "data_file"},
 		{
 			name:       "server failure",
