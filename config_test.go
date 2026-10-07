@@ -72,6 +72,7 @@ func TestLoadConfig_Invalid(t *testing.T) {
 	}{
 		{"not JSON", `nope`, "config: parse"},
 		{"data after the object", with("") + `{}`, "unexpected data"},
+		{"closing brace after the object", with("") + `}`, "unexpected data"},
 		{"unknown field", with(`, "max_task": 3`), "max_task"},
 		{"missing data_file", `{"timezone": "Europe/Paris"}`, "data_file"},
 		{"relative data_file", `{"data_file": "tasks.json", "timezone": "Europe/Paris"}`, "absolute"},

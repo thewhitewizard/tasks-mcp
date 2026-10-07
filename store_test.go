@@ -239,3 +239,91 @@ func TestStore_WriteFailure(t *testing.T) {
 		t.Errorf("CreateProject = %+v (%v), want a zero Project and an error", got, err)
 	}
 }
+
+func TestStore_UpdateTask(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t, 10)
+	created, err := s.CreateTask(sampleTask(t, "Buy milk", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := s.UpdateTask(strings.ToUpper(created.ID), func(task *Task) error {
+		task.Title = "Buy oat milk"
+		task.ID = "t_hijack"
+		return nil
+	})
+	if err != nil || updated.Title != "Buy oat milk" || updated.ID != created.ID {
+		t.Fatalf("UpdateTask = %+v (%v), want the new title under the same ID", updated, err)
+	}
+	if got, _ := newJSONStore(s.path, s.maxTasks, time.Second).GetTask(created.ID); got.Title != "Buy oat milk" {
+		t.Errorf("persisted title = %q, want the update", got.Title)
+	}
+
+	before := mustRead(t, s)
+	boom := errors.New("boom")
+	refused := []struct {
+		name string
+		id   string
+		fn   func(*Task) error
+		want error
+	}{
+		{"fn fails", created.ID, func(*Task) error { return boom }, boom},
+		{"unknown project", created.ID, func(task *Task) error { task.Project = "p_nope22"; return nil }, ErrInvalidProject},
+		{"unknown task", "t_nope22", func(*Task) error { return nil }, ErrNotFound},
+	}
+	for _, tt := range refused {
+		got, err := s.UpdateTask(tt.id, tt.fn)
+		if !errors.Is(err, tt.want) || got.ID != "" {
+			t.Errorf("%s: got %+v (%v), want a zero Task and %v", tt.name, got, err, tt.want)
+		}
+		if after := mustRead(t, s); after != before {
+			t.Errorf("%s: the Data file changed", tt.name)
+		}
+	}
+}
+
+func TestStore_DeleteTask(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t, 10)
+	keep, err1 := s.CreateTask(sampleTask(t, "Keep", ""))
+	drop, err2 := s.CreateTask(sampleTask(t, "Drop", ""))
+	if err1 != nil || err2 != nil {
+		t.Fatal(err1, err2)
+	}
+
+	if err := s.DeleteTask(strings.ToUpper(drop.ID)); err != nil {
+		t.Fatalf("DeleteTask: %v", err)
+	}
+	if left, err := s.ListTasks(); err != nil || len(left) != 1 || left[0].ID != keep.ID {
+		t.Errorf("tasks left = %v (%v), want only %s", left, err, keep.ID)
+	}
+	for _, id := range []string{drop.ID, "t_nope22"} {
+		if err := s.DeleteTask(id); !errors.Is(err, ErrNotFound) {
+			t.Errorf("DeleteTask(%s) = %v, want ErrNotFound", id, err)
+		}
+	}
+	if err := s.DeleteTask(keep.ID); err != nil || !strings.Contains(mustRead(t, s), `"tasks": []`) {
+		t.Errorf("deleting the last task: %v, want an empty list in the file, not null", err)
+	}
+}
+
+func TestStore_RefusedCreationLeavesTheFileAlone(t *testing.T) {
+	t.Parallel()
+
+	s := newTestStore(t, 2)
+	for _, title := range []string{"First", "Second"} {
+		if _, err := s.CreateTask(sampleTask(t, title, "")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := mustRead(t, s)
+	if _, err := s.CreateTask(sampleTask(t, "Too many", "")); !errors.Is(err, ErrLimit) {
+		t.Errorf("error = %v, want ErrLimit", err)
+	}
+	if after := mustRead(t, s); after != before {
+		t.Error("a creation refused by ErrLimit modified the Data file")
+	}
+}
