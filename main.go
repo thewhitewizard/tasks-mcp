@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -62,19 +63,12 @@ func run(args []string, getenv func(string) string, stderr io.Writer, serve func
 	}
 	logger.Printf("starting %s, timezone %s", version, cfg.Timezone)
 
-	if err := serve(newServer()); err != nil {
+	store := newJSONStore(cfg.DataFile, cfg.MaxTasks, time.Duration(cfg.LockTimeoutSeconds)*time.Second)
+	if err := serve(newServer(cfg, store)); err != nil {
 		logger.Printf("server stopped: %v", err)
 		return 1
 	}
 	return 0
-}
-
-// newServer returns the MCP server. It has no tool yet.
-func newServer() *server.MCPServer {
-	return server.NewMCPServer("tasks-mcp", version,
-		server.WithToolCapabilities(false),
-		server.WithRecovery(),
-	)
 }
 
 // prepareDataDir creates the directory of the Data file if needed (0700) and

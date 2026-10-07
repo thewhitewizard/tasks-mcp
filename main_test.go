@@ -2,14 +2,13 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -148,24 +147,19 @@ func TestRun_DataDirectoryNotWritable(t *testing.T) {
 	}
 }
 
-func TestRun_ServesAnEmptyToolList(t *testing.T) {
+func TestRun_ServesTheTasksOfTheDataFile(t *testing.T) {
 	t.Parallel()
 
-	res := runWith(t, []string{"--config", configFor(t, filepath.Join(t.TempDir(), "tasks.json"))}, nil, nil)
+	dataFile := filepath.Join(t.TempDir(), "tasks.json")
+	if _, err := newJSONStore(dataFile, 10, time.Second).CreateProject(Project{Name: "Home"}); err != nil {
+		t.Fatal(err)
+	}
+
+	res := runWith(t, []string{"--config", configFor(t, dataFile)}, nil, nil)
 	if res.served == nil {
 		t.Fatalf("no server was served (stderr: %q)", res.stderr)
 	}
-	request := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
-	raw, err := json.Marshal(res.served.HandleMessage(context.Background(), []byte(request)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response struct {
-		Result struct {
-			Tools []json.RawMessage `json:"tools"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(raw, &response); err != nil || response.Result.Tools == nil || len(response.Result.Tools) != 0 {
-		t.Errorf("tools/list = %s, want an empty tools array", raw)
+	if text, isErr := callTool(t, res.served, "list_projects", nil); isErr || !strings.Contains(text, `"name":"Home"`) {
+		t.Errorf("list_projects = %s (error %v), want the project of the Data file named in the configuration", text, isErr)
 	}
 }
