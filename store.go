@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
@@ -23,6 +24,10 @@ type Store interface {
 	GetTask(id string) (Task, error)
 	// CreateTask assigns the ID.
 	CreateTask(Task) (Task, error)
+	// UpdateTask applies fn to a copy of the Task and saves it if fn succeeds.
+	// The ID cannot be changed.
+	UpdateTask(id string, fn func(*Task) error) (Task, error)
+	DeleteTask(id string) error
 }
 
 var (
@@ -259,6 +264,39 @@ func (s *jsonStore) CreateTask(task Task) (Task, error) {
 		return Task{}, err
 	}
 	return task, nil
+}
+
+func (s *jsonStore) UpdateTask(id string, fn func(*Task) error) (Task, error) {
+	var updated Task
+	err := s.update(func(doc *document) error {
+		i, err := doc.taskIndex(id)
+		if err != nil {
+			return err
+		}
+		candidate := doc.Tasks[i]
+		if err := fn(&candidate); err != nil {
+			return err
+		}
+		candidate.ID = doc.Tasks[i].ID
+		if err := doc.checkProject(candidate.Project); err != nil {
+			return err
+		}
+		doc.Tasks[i] = candidate
+		updated = candidate
+		return nil
+	})
+	return updated, err
+}
+
+func (s *jsonStore) DeleteTask(id string) error {
+	return s.update(func(doc *document) error {
+		i, err := doc.taskIndex(id)
+		if err != nil {
+			return err
+		}
+		doc.Tasks = slices.Delete(doc.Tasks, i, i+1)
+		return nil
+	})
 }
 
 var _ Store = (*jsonStore)(nil)
