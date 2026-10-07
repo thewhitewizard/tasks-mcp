@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Store is how the tools read and write Projects and Tasks. Every method is one
@@ -49,10 +50,11 @@ type jsonStore struct {
 	path     string
 	maxTasks int
 	newID    func(prefix string) string
+	lock     fileLock
 }
 
-func newJSONStore(path string, maxTasks int) *jsonStore {
-	return &jsonStore{path: path, maxTasks: maxTasks, newID: newID}
+func newJSONStore(path string, maxTasks int, lockTimeout time.Duration) *jsonStore {
+	return &jsonStore{path: path, maxTasks: maxTasks, newID: newID, lock: fileLock{path: path + ".lock", timeout: lockTimeout}}
 }
 
 // load reads the Data file. A missing file is an empty document; a file that
@@ -127,9 +129,16 @@ func (s *jsonStore) save(doc document) (err error) {
 	return nil
 }
 
-// update reads the document, applies fn and saves the result; nothing is
-// written if fn fails.
+// update takes the Lock, reads the document, applies fn and saves the result;
+// nothing is written if fn fails. The document is read after the Lock is held,
+// so that a write made by another process in the meantime is not overwritten.
 func (s *jsonStore) update(fn func(*document) error) error {
+	release, err := s.lock.acquire()
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	doc, err := s.load()
 	if err != nil {
 		return err

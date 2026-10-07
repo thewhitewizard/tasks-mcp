@@ -12,3 +12,10 @@ linters:
     - unconvert
     - unparam
     - nolintlint
+
+  settings:
+    gosec:
+      excludes:
+        # Taint analysis of file paths: every path comes from the configuration,
+        # never from a tool (see CONTEXT.md, "Data file"), so it cannot flag a real problem here.
+        - G703
