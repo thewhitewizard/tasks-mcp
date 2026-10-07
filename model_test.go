@@ -116,9 +116,9 @@ func TestNewTask_Valid(t *testing.T) {
 		edit func(*Task) // applied to the defaults to build the want
 	}{
 		{"title is trimmed and cleaned", TaskInput{Title: "  Buy" + rlo + " milk" + zwsp + "\x00 "}, func(k *Task) { k.Title = "Buy milk" }},
-		{"newlines in a title become spaces", TaskInput{Title: "Buy\nmilk\r\ntoday"}, func(k *Task) { k.Title = "Buy milk today" }},
+		{"newlines in a title become spaces", TaskInput{Title: "Buy\nmilk\r\ntoday\rnow"}, func(k *Task) { k.Title = "Buy milk today now" }},
 		{"title of 200 characters", TaskInput{Title: strings.Repeat("é", 200)}, func(k *Task) { k.Title = strings.Repeat("é", 200) }},
-		{"notes keep their lines", TaskInput{Title: "t", Notes: "a\r\nb" + rlo + "\x00\tc"}, func(k *Task) { k.Notes = "a\nbc" }},
+		{"notes keep their lines", TaskInput{Title: "t", Notes: "a\r\nb" + rlo + "\x00\tc\rd"}, func(k *Task) { k.Notes = "a\nb c\nd" }},
 		{"notes of 2000 characters", TaskInput{Title: "t", Notes: strings.Repeat("n", 2000)}, func(k *Task) { k.Notes = strings.Repeat("n", 2000) }},
 		{"explicit status and priority", TaskInput{Title: "t", Status: "doing", Priority: "high"}, func(k *Task) { k.Status, k.Priority = StatusDoing, PriorityHigh }},
 		{"created already done", TaskInput{Title: "t", Status: "done"}, func(k *Task) { k.Status, k.CompletedAt = StatusDone, &now }},
@@ -174,7 +174,7 @@ func TestNewTask_Invalid(t *testing.T) {
 		{"due in another format", TaskInput{Title: "t", Due: "14/07/2026"}, "due", "14/07/2026"},
 		{"due that does not exist", TaskInput{Title: "t", Due: "2026-02-30"}, "due", "2026-02-30"},
 		{"too many tags", TaskInput{Title: "t", Tags: tagsOf(11, 3)}, "tags", ""},
-		{"tag too long", TaskInput{Title: "t", Tags: []string{strings.Repeat("g", 31)}}, "tag", "ggg"},
+		{"tag too long", TaskInput{Title: "t", Tags: []string{strings.Repeat("g", 31)}}, "tag must", "ggg"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -253,10 +253,7 @@ func TestTask_SetStatus(t *testing.T) {
 	later := created.Add(time.Hour)
 	latest := later.Add(time.Hour)
 
-	task, err := newTask(TaskInput{Title: "t"}, created)
-	if err != nil {
-		t.Fatal(err)
-	}
+	task := Task{Title: "t", Status: StatusTodo, Tags: []string{}, CreatedAt: created, UpdatedAt: created}
 
 	task.setStatus(StatusDone, later)
 	if task.Status != StatusDone || task.CompletedAt == nil || !task.CompletedAt.Equal(later) || !task.UpdatedAt.Equal(later) {

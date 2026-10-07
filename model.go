@@ -124,16 +124,19 @@ func (t *Task) setStatus(status Status, now time.Time) {
 	}
 }
 
+// lineEndings turns every line ending, even a lone CR, into LF.
+var lineEndings = strings.NewReplacer("\r\n", "\n", "\r", "\n")
+
 // cleanText drops control and invisible characters (categories Cc and Cf),
 // trims it, and checks its length. Newlines are kept when multiline, and turned
-// into spaces otherwise.
+// into spaces otherwise, like tabs.
 func cleanText(field, s string, limit int, multiline, required bool) (string, error) {
-	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = lineEndings.Replace(s)
 	s = strings.Map(func(r rune) rune {
 		switch {
 		case r == '\n' && multiline:
 			return r
-		case r == '\n':
+		case r == '\n', r == '\t':
 			return ' '
 		case unicode.IsControl(r) || unicode.Is(unicode.Cf, r):
 			return -1
