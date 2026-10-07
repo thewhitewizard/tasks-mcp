@@ -245,9 +245,12 @@ func (u TaskUpdate) isEmpty() bool {
 
 // apply validates u and changes t as it says. UpdatedAt moves only when
 // something actually changed. A Project is not checked here: the Store does.
+// It may stop half way: the Store gives it a copy and drops it on error.
 func (u TaskUpdate) apply(t *Task, now time.Time) error {
+	if t.Tags == nil { // a Data file may have none: [] must not count as a change
+		t.Tags = []string{}
+	}
 	before := *t
-	before.Tags = slices.Clone(t.Tags)
 	var err error
 	if u.Title != nil {
 		if t.Title, err = cleanText("title", *u.Title, maxTitleLen, false, true); err != nil {

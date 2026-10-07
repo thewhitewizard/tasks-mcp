@@ -61,39 +61,32 @@ func newServer(cfg Config, store Store, clock func() time.Time) *server.MCPServe
 			"title, status and priority cannot be cleared. Setting status to done records the completion; any other status removes it. "+
 			"Returns the whole updated task, e.g. {\"task\":{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",\"status\":\"doing\",...}}. Give at least one field."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
-		mcp.WithString("title", mcp.Description("New title, at most 200 characters.")),
+		mcp.WithString("title", mcp.Description("New title, at most 200 characters; it cannot be empty.")),
 		mcp.WithString("notes", mcp.Description("New notes, at most 2000 characters; empty to clear.")),
-		mcp.WithString("status", mcp.Enum(string(StatusTodo), string(StatusDoing), string(StatusDone)), mcp.Description("New status.")),
-		mcp.WithString("priority", mcp.Enum(string(PriorityLow), string(PriorityNormal), string(PriorityHigh)), mcp.Description("New priority.")),
-		mcp.WithString("due", mcp.Description("New due day, YYYY-MM-DD; empty to clear.")),
+		mcp.WithString("status", mcp.Enum(string(StatusTodo), string(StatusDoing), string(StatusDone)), mcp.Description("New status; it cannot be empty.")),
+		mcp.WithString("priority", mcp.Enum(string(PriorityLow), string(PriorityNormal), string(PriorityHigh)), mcp.Description("New priority; it cannot be empty.")),
+		mcp.WithString("due", mcp.Description("New due day, e.g. 2026-07-25 (YYYY-MM-DD); empty to clear.")),
 		mcp.WithString("project", mcp.Description("New project id from list_projects (p_ followed by 6 characters); empty to remove the task from its project.")),
 		mcp.WithArray("tags", mcp.WithStringItems(), mcp.Description("The new tags, replacing the old ones (at most 10, 30 characters each); an empty list clears them.")),
 	), h.updateTask)
 	s.AddTool(mcp.NewTool("complete_task", writer(),
-		mcp.WithDescription("Mark a task as done and record when. Safe to repeat: a task that is already done is returned unchanged. Returns the whole task."),
+		mcp.WithDescription("Mark a task as done and record when. Safe to repeat: a task that is already done is returned unchanged. Returns the whole task, e.g. {\"task\":{\"id\":\"t_a4c7mz\",\"status\":\"done\",\"completed_at\":\"2026-07-14T09:30:00+02:00\",...}}."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
 	), h.completeTask)
-	s.AddTool(mcp.NewTool("delete_task", destructive(),
-		mcp.WithDescription("Delete a task for good; it cannot be undone. Use complete_task for a task that is merely finished. Returns the deleted task, e.g. {\"deleted\":{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",...}}."),
-		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
-	), h.deleteTask)
 	return s
 }
 
 // readOnly marks a tool as reading only, closed-world, and not destructive:
 // mcp-go would otherwise default destructiveHint and openWorldHint to true.
-func readOnly() mcp.ToolOption { return hints(true, false) }
+func readOnly() mcp.ToolOption { return hints(true) }
 
 // writer marks a tool as changing data, closed-world, and not destructive.
-func writer() mcp.ToolOption { return hints(false, false) }
+func writer() mcp.ToolOption { return hints(false) }
 
-// destructive marks a tool as deleting data: only delete_task.
-func destructive() mcp.ToolOption { return hints(false, true) }
-
-func hints(readOnly, destructive bool) mcp.ToolOption {
+func hints(readOnly bool) mcp.ToolOption {
 	return func(t *mcp.Tool) {
 		mcp.WithReadOnlyHintAnnotation(readOnly)(t)
-		mcp.WithDestructiveHintAnnotation(destructive)(t)
+		mcp.WithDestructiveHintAnnotation(false)(t)
 		mcp.WithOpenWorldHintAnnotation(false)(t)
 	}
 }
@@ -240,9 +233,12 @@ func (h *handlers) getTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err != nil {
 		return storeError(err), nil
 	}
-	return jsonResult(struct {
-		Task Task `json:"task"`
-	}{task}), nil
+	return taskResult(task), nil
+}
+
+// taskResult answers with the task.
+func taskResult(task Task) *mcp.CallToolResult {
+	return jsonResult(map[string]Task{"task": task})
 }
 
 // taskID returns the id argument, which every task tool requires.
@@ -332,9 +328,7 @@ func (h *handlers) addTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err != nil {
 		return storeError(err), nil
 	}
-	return jsonResult(struct {
-		Task Task `json:"task"`
-	}{task}), nil
+	return taskResult(task), nil
 }
 
 // optText returns the text argument name, trimmed, or nil when it is absent or null.
@@ -370,9 +364,7 @@ func (h *handlers) updateTask(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return storeError(err), nil
 	}
-	return jsonResult(struct {
-		Task Task `json:"task"`
-	}{task}), nil
+	return taskResult(task), nil
 }
 
 func (h *handlers) completeTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -387,24 +379,5 @@ func (h *handlers) completeTask(_ context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return storeError(err), nil
 	}
-	return jsonResult(struct {
-		Task Task `json:"task"`
-	}{task}), nil
-}
-
-func (h *handlers) deleteTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id, err := taskID(req)
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	task, err := h.store.GetTask(id)
-	if err == nil {
-		err = h.store.DeleteTask(id)
-	}
-	if err != nil {
-		return storeError(err), nil
-	}
-	return jsonResult(struct {
-		Deleted Task `json:"deleted"`
-	}{task}), nil
+	return taskResult(task), nil
 }

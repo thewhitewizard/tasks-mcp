@@ -38,15 +38,15 @@ func newWriteFixture(t *testing.T) writeFixture {
 	return writeFixture{srv, store, home, task}
 }
 
-// call runs a tool and decodes the task it answers under key.
-func (f writeFixture) call(t *testing.T, tool, key string, args map[string]any) (Task, string) {
+// call runs a tool and decodes the task it answers.
+func (f writeFixture) call(t *testing.T, tool string, args map[string]any) (Task, string) {
 	t.Helper()
 	text, isErr := callTool(t, f.srv, tool, args)
 	var got map[string]Task
 	if err := json.Unmarshal([]byte(text), &got); isErr || err != nil {
 		t.Fatalf("%s(%v) = %q (error %v, %v)", tool, args, text, isErr, err)
 	}
-	return got[key], text
+	return got["task"], text
 }
 
 const (
@@ -135,7 +135,7 @@ func TestUpdateTask(t *testing.T) {
 			if _, given := args["id"]; !given {
 				args["id"] = f.task.ID
 			}
-			got, text := f.call(t, "update_task", "task", args)
+			got, text := f.call(t, "update_task", args)
 			tt.check(t, f, got, text)
 		})
 	}
@@ -145,11 +145,11 @@ func TestUpdateTask_Completion(t *testing.T) {
 	t.Parallel()
 
 	f := newWriteFixture(t)
-	done, text := f.call(t, "update_task", "task", map[string]any{"id": f.task.ID, "status": "done"})
+	done, text := f.call(t, "update_task", map[string]any{"id": f.task.ID, "status": "done"})
 	if done.Status != StatusDone || !strings.Contains(text, completedAt) {
 		t.Errorf("update_task done = %s, want completed_at set", text)
 	}
-	reopened, text := f.call(t, "update_task", "task", map[string]any{"id": f.task.ID, "status": "doing"})
+	reopened, text := f.call(t, "update_task", map[string]any{"id": f.task.ID, "status": "doing"})
 	if reopened.Status != StatusDoing || strings.Contains(text, "completed_at") {
 		t.Errorf("update_task doing = %s, want completed_at gone", text)
 	}
@@ -203,7 +203,7 @@ func TestCompleteTask(t *testing.T) {
 	t.Parallel()
 
 	f := newWriteFixture(t)
-	done, text := f.call(t, "complete_task", "task", map[string]any{"id": strings.ToUpper(f.task.ID)})
+	done, text := f.call(t, "complete_task", map[string]any{"id": strings.ToUpper(f.task.ID)})
 	if done.Status != StatusDone || !strings.Contains(text, completedAt) || !strings.Contains(text, updatedNow) {
 		t.Errorf("complete_task = %s, want done, completed and updated at 09:30", text)
 	}
@@ -223,24 +223,17 @@ func TestCompleteTask(t *testing.T) {
 	}
 }
 
-func TestDeleteTask(t *testing.T) {
+func TestUpdateTask_NoTagsAtAllIsNotAChange(t *testing.T) {
 	t.Parallel()
 
 	f := newWriteFixture(t)
-	if _, err := f.store.CreateTask(sampleTask(t, "Keep me", "")); err != nil {
+	earlier := parisNow(t).Add(-2 * time.Hour)
+	bare, err := f.store.CreateTask(Task{Title: "Bare", Status: StatusTodo, Priority: PriorityNormal, CreatedAt: earlier, UpdatedAt: earlier}) // Tags is nil
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	gone, text := f.call(t, "delete_task", "deleted", map[string]any{"id": strings.ToUpper(f.task.ID)})
-	if gone.ID != f.task.ID || gone.Title != "Pay rent" {
-		t.Errorf("delete_task = %s, want the deleted task back", text)
-	}
-	if left, _ := listTasks(t, f.srv, nil); !slices.Equal(titles(left.Tasks), []string{"Keep me"}) {
-		t.Errorf("tasks left = %v, want only Keep me", titles(left.Tasks))
-	}
-	for name, args := range map[string]map[string]any{"already deleted": {"id": f.task.ID}, "unknown id": {"id": "t_secret2"}, "no id": nil} {
-		if text, isErr := callTool(t, f.srv, "delete_task", args); !isErr || strings.Contains(text, "secret2") {
-			t.Errorf("%s: delete_task = %q (error %v), want an error without the id", name, text, isErr)
-		}
+	_, text := f.call(t, "update_task", map[string]any{"id": bare.ID, "tags": []string{}})
+	if strings.Contains(text, updatedNow) || !strings.Contains(text, `"tags":[]`) {
+		t.Errorf("update_task = %s, want tags [] and updated_at left alone", text)
 	}
 }

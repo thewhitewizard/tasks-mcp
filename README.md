@@ -85,7 +85,7 @@ La tâche est créée `todo`. Réponse : `{"task":{…}}`, la tâche créée ave
 
 Paramètres : `id` (obligatoire) et, facultatifs, `title`, `notes`, `status`, `priority`, `due`, `project`, `tags` (mêmes formats et limites qu'`add_task`). Réponse : `{"task":{…}}`, la tâche entière.
 
-- Un champ absent (ou `null`) reste inchangé.
+- Un champ absent (ou `null`) reste inchangé ; les espaces autour d'un texte sont ignorés (un texte fait d'espaces efface donc `notes`, `due` ou `project`).
 - Une chaîne vide efface `notes`, `due` et `project` ; `tags` remplace la liste (`[]` l'efface).
 - `title`, `status` et `priority` ne s'effacent pas : une valeur vide est une erreur.
 - Passer `status` à `done` renseigne `completed_at` ; tout autre statut l'efface.
