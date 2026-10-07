@@ -4,3 +4,4 @@ tasks-mcp.exe
 config.json
 tasks.json
 *.lock
+*.tmp

@@ -73,20 +73,27 @@ func newServer(cfg Config, store Store, clock func() time.Time) *server.MCPServe
 		mcp.WithDescription("Mark a task as done and record when. Safe to repeat: a task that is already done is returned unchanged. Returns the whole task, e.g. {\"task\":{\"id\":\"t_a4c7mz\",\"status\":\"done\",\"completed_at\":\"2026-07-14T09:30:00+02:00\",...}}."),
 		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
 	), h.completeTask)
+	s.AddTool(mcp.NewTool("delete_task", destructive(),
+		mcp.WithDescription("Delete a task for good; it cannot be undone. Use complete_task for a task that is merely finished. Returns the deleted task, e.g. {\"deleted\":{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",...}}."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
+	), h.deleteTask)
 	return s
 }
 
 // readOnly marks a tool as reading only, closed-world, and not destructive:
 // mcp-go would otherwise default destructiveHint and openWorldHint to true.
-func readOnly() mcp.ToolOption { return hints(true) }
+func readOnly() mcp.ToolOption { return hints(true, false) }
 
 // writer marks a tool as changing data, closed-world, and not destructive.
-func writer() mcp.ToolOption { return hints(false) }
+func writer() mcp.ToolOption { return hints(false, false) }
 
-func hints(readOnly bool) mcp.ToolOption {
+// destructive marks a tool as deleting data: only delete_task.
+func destructive() mcp.ToolOption { return hints(false, true) }
+
+func hints(readOnly, destructive bool) mcp.ToolOption {
 	return func(t *mcp.Tool) {
 		mcp.WithReadOnlyHintAnnotation(readOnly)(t)
-		mcp.WithDestructiveHintAnnotation(false)(t)
+		mcp.WithDestructiveHintAnnotation(destructive)(t)
 		mcp.WithOpenWorldHintAnnotation(false)(t)
 	}
 }
@@ -233,12 +240,12 @@ func (h *handlers) getTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err != nil {
 		return storeError(err), nil
 	}
-	return taskResult(task), nil
+	return taskResult("task", task), nil
 }
 
-// taskResult answers with the task.
-func taskResult(task Task) *mcp.CallToolResult {
-	return jsonResult(map[string]Task{"task": task})
+// taskResult answers with the task under key.
+func taskResult(key string, task Task) *mcp.CallToolResult {
+	return jsonResult(map[string]Task{key: task})
 }
 
 // taskID returns the id argument, which every task tool requires.
@@ -328,7 +335,7 @@ func (h *handlers) addTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err != nil {
 		return storeError(err), nil
 	}
-	return taskResult(task), nil
+	return taskResult("task", task), nil
 }
 
 // optText returns the text argument name, trimmed, or nil when it is absent or null.
@@ -364,7 +371,7 @@ func (h *handlers) updateTask(_ context.Context, req mcp.CallToolRequest) (*mcp.
 	if err != nil {
 		return storeError(err), nil
 	}
-	return taskResult(task), nil
+	return taskResult("task", task), nil
 }
 
 func (h *handlers) completeTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -379,5 +386,17 @@ func (h *handlers) completeTask(_ context.Context, req mcp.CallToolRequest) (*mc
 	if err != nil {
 		return storeError(err), nil
 	}
-	return taskResult(task), nil
+	return taskResult("task", task), nil
+}
+
+func (h *handlers) deleteTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := taskID(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	task, err := h.store.DeleteTask(id)
+	if err != nil {
+		return storeError(err), nil
+	}
+	return taskResult("deleted", task), nil
 }

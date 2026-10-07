@@ -237,3 +237,28 @@ func TestUpdateTask_NoTagsAtAllIsNotAChange(t *testing.T) {
 		t.Errorf("update_task = %s, want tags [] and updated_at left alone", text)
 	}
 }
+
+func TestDeleteTask(t *testing.T) {
+	t.Parallel()
+
+	f := newWriteFixture(t)
+	if _, err := f.store.CreateTask(sampleTask(t, "Keep me", "")); err != nil {
+		t.Fatal(err)
+	}
+
+	text, isErr := callTool(t, f.srv, "delete_task", map[string]any{"id": strings.ToUpper(f.task.ID)})
+	var gone struct {
+		Deleted Task `json:"deleted"`
+	}
+	if err := json.Unmarshal([]byte(text), &gone); isErr || err != nil || gone.Deleted.ID != f.task.ID || gone.Deleted.Title != "Pay rent" {
+		t.Errorf("delete_task = %q (error %v, %v), want the deleted task back under \"deleted\"", text, isErr, err)
+	}
+	if left, _ := listTasks(t, f.srv, nil); !slices.Equal(titles(left.Tasks), []string{"Keep me"}) {
+		t.Errorf("tasks left = %v, want only Keep me", titles(left.Tasks))
+	}
+	for name, args := range map[string]map[string]any{"already deleted": {"id": f.task.ID}, "unknown id": {"id": "t_secret2"}, "no id": nil} {
+		if text, isErr := callTool(t, f.srv, "delete_task", args); !isErr || strings.Contains(text, "secret2") {
+			t.Errorf("%s: delete_task = %q (error %v), want an error without the id", name, text, isErr)
+		}
+	}
+}

@@ -27,7 +27,8 @@ type Store interface {
 	// UpdateTask applies fn to a copy of the Task and saves it if fn succeeds.
 	// The ID cannot be changed.
 	UpdateTask(id string, fn func(*Task) error) (Task, error)
-	DeleteTask(id string) error
+	// DeleteTask returns the Task it deleted.
+	DeleteTask(id string) (Task, error)
 }
 
 var (
@@ -292,15 +293,21 @@ func (s *jsonStore) UpdateTask(id string, fn func(*Task) error) (Task, error) {
 	return updated, nil
 }
 
-func (s *jsonStore) DeleteTask(id string) error {
-	return s.update(func(doc *document) error {
+func (s *jsonStore) DeleteTask(id string) (Task, error) {
+	var deleted Task
+	err := s.update(func(doc *document) error {
 		i, err := doc.taskIndex(id)
 		if err != nil {
 			return err
 		}
+		deleted = doc.Tasks[i]
 		doc.Tasks = slices.Delete(doc.Tasks, i, i+1)
 		return nil
 	})
+	if err != nil {
+		return Task{}, err
+	}
+	return deleted, nil
 }
 
 var _ Store = (*jsonStore)(nil)

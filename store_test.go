@@ -294,18 +294,18 @@ func TestStore_DeleteTask(t *testing.T) {
 		t.Fatal(err1, err2)
 	}
 
-	if err := s.DeleteTask(strings.ToUpper(drop.ID)); err != nil {
-		t.Fatalf("DeleteTask: %v", err)
+	if gone, err := s.DeleteTask(strings.ToUpper(drop.ID)); err != nil || gone.ID != drop.ID || gone.Title != "Drop" {
+		t.Fatalf("DeleteTask = %+v (%v), want the deleted task back", gone, err)
 	}
 	if left, err := s.ListTasks(); err != nil || len(left) != 1 || left[0].ID != keep.ID {
 		t.Errorf("tasks left = %v (%v), want only %s", left, err, keep.ID)
 	}
 	for _, id := range []string{drop.ID, "t_nope22"} {
-		if err := s.DeleteTask(id); !errors.Is(err, ErrNotFound) {
-			t.Errorf("DeleteTask(%s) = %v, want ErrNotFound", id, err)
+		if gone, err := s.DeleteTask(id); !errors.Is(err, ErrNotFound) || gone.ID != "" {
+			t.Errorf("DeleteTask(%s) = %+v (%v), want a zero Task and ErrNotFound", id, gone, err)
 		}
 	}
-	if err := s.DeleteTask(keep.ID); err != nil || !strings.Contains(mustRead(t, s), `"tasks": []`) {
+	if _, err := s.DeleteTask(keep.ID); err != nil || !strings.Contains(mustRead(t, s), `"tasks": []`) {
 		t.Errorf("deleting the last task: %v, want an empty list in the file, not null", err)
 	}
 }

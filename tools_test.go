@@ -87,11 +87,12 @@ func TestTools_List(t *testing.T) {
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
 		a := tool.Annotations
-		writes := slices.Contains([]string{"create_project", "add_task", "update_task", "complete_task"}, tool.Name)
-		if a.ReadOnly == nil || *a.ReadOnly == writes || a.Destructive == nil || *a.Destructive || a.OpenWorld == nil || *a.OpenWorld {
-			t.Errorf("%s: annotations = %+v, want readOnly %v, destructive false, openWorld false (all explicit)", tool.Name, a, !writes)
+		writes := slices.Contains([]string{"create_project", "add_task", "update_task", "complete_task", "delete_task"}, tool.Name)
+		destructive := tool.Name == "delete_task" // the only one
+		if a.ReadOnly == nil || *a.ReadOnly == writes || a.Destructive == nil || *a.Destructive != destructive || a.OpenWorld == nil || *a.OpenWorld {
+			t.Errorf("%s: annotations = %+v, want readOnly %v, destructive %v, openWorld false (all explicit)", tool.Name, a, !writes, destructive)
 		}
-		if want := map[string][]string{"create_project": {"name"}, "add_task": {"title"}, "update_task": {"id"}, "complete_task": {"id"}}[tool.Name]; want != nil && !slices.Equal(tool.InputSchema.Required, want) {
+		if want := map[string][]string{"create_project": {"name"}, "add_task": {"title"}, "update_task": {"id"}, "complete_task": {"id"}, "delete_task": {"id"}}[tool.Name]; want != nil && !slices.Equal(tool.InputSchema.Required, want) {
 			t.Errorf("%s required = %v, want %v", tool.Name, tool.InputSchema.Required, want)
 		}
 		if tool.Name == "add_task" || tool.Name == "update_task" {
@@ -109,8 +110,8 @@ func TestTools_List(t *testing.T) {
 			t.Error("list_tasks does not point to get_task for the notes")
 		}
 	}
-	if slices.Sort(names); !slices.Equal(names, []string{"add_task", "complete_task", "create_project", "get_task", "list_projects", "list_tasks", "update_task"}) {
-		t.Errorf("tools = %v, want the seven tools", names)
+	if slices.Sort(names); !slices.Equal(names, []string{"add_task", "complete_task", "create_project", "delete_task", "get_task", "list_projects", "list_tasks", "update_task"}) {
+		t.Errorf("tools = %v, want the eight tools", names)
 	}
 }
 
