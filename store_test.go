@@ -162,6 +162,7 @@ func TestStore_UnusableDataFile(t *testing.T) {
 		{"empty", "", "empty or corrupt"},
 		{"not JSON", "{not json", "empty or corrupt"},
 		{"data after the document", `{"schema_version":1}{}`, "empty or corrupt"},
+		{"closing brace after the document", `{"schema_version":1}}`, "empty or corrupt"},
 		{"unknown field", `{"schema_version":1,"extra":true}`, "empty or corrupt"},
 		{"no schema_version", `{"projects":[],"tasks":[]}`, "schema_version 0"},
 		{"newer schema_version", `{"schema_version":2}`, "schema_version 2"},
@@ -225,5 +226,15 @@ func TestStore_IDCollisions(t *testing.T) {
 	}
 	if calls != idAttempts {
 		t.Errorf("drew %d IDs, want %d attempts", calls, idAttempts)
+	}
+}
+
+func TestStore_WriteFailure(t *testing.T) {
+	t.Parallel()
+
+	s := newJSONStore(filepath.Join(t.TempDir(), "missing", "tasks.json"), 3)
+	got, err := s.CreateProject(Project{Name: "Home"})
+	if err == nil || got.ID != "" {
+		t.Errorf("CreateProject = %+v (%v), want a zero Project and an error", got, err)
 	}
 }

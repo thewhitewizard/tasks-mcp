@@ -80,7 +80,7 @@ func (s *jsonStore) load() (document, error) {
 	var doc document
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
-	if err := dec.Decode(&doc); err != nil || dec.More() {
+	if err := dec.Decode(&doc); err != nil || dec.Decode(&struct{}{}) != io.EOF {
 		return document{}, errors.New("data file is empty or corrupt: left untouched, fix or remove it")
 	}
 	if doc.SchemaVersion != schemaVersion {
@@ -180,7 +180,10 @@ func (s *jsonStore) CreateProject(p Project) (Project, error) {
 		doc.Projects = append(doc.Projects, p)
 		return nil
 	})
-	return p, err
+	if err != nil {
+		return Project{}, err
+	}
+	return p, nil
 }
 
 func (s *jsonStore) ListTasks() ([]Task, error) {
@@ -243,7 +246,10 @@ func (s *jsonStore) CreateTask(task Task) (Task, error) {
 		doc.Tasks = append(doc.Tasks, task)
 		return nil
 	})
-	return task, err
+	if err != nil {
+		return Task{}, err
+	}
+	return task, nil
 }
 
 var _ Store = (*jsonStore)(nil)
