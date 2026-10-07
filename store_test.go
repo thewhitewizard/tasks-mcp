@@ -10,12 +10,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // newTestStore returns a jsonStore on a fresh Data file in a temporary directory.
 func newTestStore(t *testing.T, maxTasks int) *jsonStore {
 	t.Helper()
-	return newJSONStore(filepath.Join(t.TempDir(), "tasks.json"), maxTasks)
+	return newJSONStore(filepath.Join(t.TempDir(), "tasks.json"), maxTasks, time.Second)
 }
 
 // sameJSON fails unless a and b serialise identically (time zones included).
@@ -55,7 +56,7 @@ func TestStore_CreateProject(t *testing.T) {
 	}
 
 	// A second store on the same file sees it: it was persisted, not cached.
-	listed, err := newJSONStore(s.path, s.maxTasks).ListProjects()
+	listed, err := newJSONStore(s.path, s.maxTasks, time.Second).ListProjects()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestStore_Tasks(t *testing.T) {
 		t.Fatalf("CreateTask = %+v (%v), want a t_ ID", created, err)
 	}
 
-	got, err := newJSONStore(s.path, s.maxTasks).GetTask(strings.ToUpper(created.ID)) // another store, an ID typed in capitals
+	got, err := newJSONStore(s.path, s.maxTasks, time.Second).GetTask(strings.ToUpper(created.ID)) // another store, an ID typed in capitals
 	if err != nil {
 		t.Fatalf("GetTask: %v", err)
 	}
@@ -232,7 +233,7 @@ func TestStore_IDCollisions(t *testing.T) {
 func TestStore_WriteFailure(t *testing.T) {
 	t.Parallel()
 
-	s := newJSONStore(filepath.Join(t.TempDir(), "missing", "tasks.json"), 3)
+	s := newJSONStore(filepath.Join(t.TempDir(), "missing", "tasks.json"), 3, time.Second)
 	got, err := s.CreateProject(Project{Name: "Home"})
 	if err == nil || got.ID != "" {
 		t.Errorf("CreateProject = %+v (%v), want a zero Project and an error", got, err)

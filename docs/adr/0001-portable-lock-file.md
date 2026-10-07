@@ -1,0 +1,7 @@
+# Lock: a `.lock` file created with O_EXCL, not `flock`
+
+Several `tasks-mcp` processes can write the same Data file at once (ZeroClaw starts one per session, plus command-line use), and the server must behave the same on Windows (development) and Linux (deployment) with nothing but the standard library. The Lock is a file `<data_file>.lock` created with `O_CREATE|O_EXCL`; each write holds it from the re-read of the Data file until the atomic rename, and waits at most `lock_timeout_seconds`.
+
+`flock`/`LockFileEx` would be cleaner (the kernel drops the lock when a process dies) but needs build tags per platform and a different primitive on each. Checking whether the owner is alive is not portable either. So a Lock is **Stale** after a fixed 30 seconds without being touched (a write takes milliseconds), and `lock_timeout_seconds` must stay below that, or a waiting process could take a Lock whose owner is still writing. Processes that find a Lock stale take turns through a `.lock.break` guard file and look at its age again before removing it.
+
+Known limits: a process stalled for more than 30 seconds inside a write could remove the Lock that a later process took over, and two writes would overlap. A crash leaves the Lock for up to 30 seconds, during which other writes wait and then fail with a timeout. On Windows, a reader holding the Data file open can make the final rename fail; the deployment target is Linux.

@@ -35,3 +35,7 @@ Fichier JSON strict (un champ inconnu est refusé). Voir `config.example.json`.
 | `lock_timeout_seconds` | non | 5 | Attente maximale du verrou d'écriture ; doit être inférieur à 30. |
 
 Au démarrage, le dossier du fichier de données est créé s'il manque (droits 0700), puis le serveur vérifie qu'il peut y écrire. Sinon il s'arrête avec un message sur stderr. Le fichier de données lui-même n'est pas créé au démarrage.
+
+## Écritures concurrentes
+
+Plusieurs processus `tasks-mcp` peuvent écrire le même fichier de données : chaque écriture prend un verrou (`<data_file>.lock`, avec une garde `<data_file>.lock.break`), relit le fichier, le modifie puis le remplace de façon atomique. Les lectures ne prennent pas le verrou. Un verrou abandonné par un processus mort est repris après 30 secondes ; en attendant, les écritures échouent au bout de `lock_timeout_seconds`. Ces fichiers `.lock` ne doivent pas être supprimés à la main pendant que le serveur tourne. Voir `docs/adr/0001-portable-lock-file.md`.
