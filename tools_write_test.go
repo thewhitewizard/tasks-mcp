@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -293,5 +294,18 @@ func TestDeleteTask_TwoProcessesOneWins(t *testing.T) {
 	first, second := <-results, <-results
 	if (first == nil) == (second == nil) || (first != nil && !errors.Is(first, ErrNotFound)) || (second != nil && !errors.Is(second, ErrNotFound)) {
 		t.Errorf("deletions answered %v and %v, want exactly one success and one ErrNotFound", first, second)
+	}
+}
+
+func TestWriteTools_TimestampsAreWholeSeconds(t *testing.T) {
+	t.Parallel()
+
+	now := parisNow(t)
+	store := newJSONStore(filepath.Join(t.TempDir(), "tasks.json"), 10, time.Second)
+	srv := newServer(Config{MaxResults: 50, Location: now.Location()}, store, func() time.Time { return now.Add(123456789 * time.Nanosecond) })
+	for name, args := range map[string]map[string]any{"create_project": {"name": "Home"}, "add_task": {"title": "t"}} {
+		if text, isErr := callTool(t, srv, name, args); isErr || !strings.Contains(text, `"created_at":"2026-07-14T09:30:00+02:00"`) {
+			t.Errorf("%s = %q (error %v), want created_at in whole seconds", name, text, isErr)
+		}
 	}
 }
