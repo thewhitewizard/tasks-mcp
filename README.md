@@ -2,7 +2,7 @@
 
 Serveur MCP (transport stdio) qui donne à un assistant IA un gestionnaire de tâches et de projets simple, pour un seul utilisateur. Les données sont stockées dans un fichier JSON. Le serveur n'utilise pas le réseau.
 
-> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects` et `list_tasks` (voir les issues du dépôt pour la suite).
+> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects`, `list_tasks` et `get_task` (voir les issues du dépôt pour la suite).
 
 ## Compilation
 
@@ -58,4 +58,8 @@ Aucun paramètre. Réponse : `{"projects":[{"id":"p_k3x9aq","name":"Home","descr
 | `tag` | Tag, sans tenir compte de la casse. |
 | `include_done` | Booléen, `false` par défaut : sans lui (et sans `status`), les tâches terminées sont omises. |
 
-Les filtres se combinent (ET). Réponse : `{"tasks":[…],"truncated":true}` ; `truncated` n'apparaît que si plus de `max_results` tâches correspondent, et `tasks` vaut `[]` quand rien ne correspond. Les tâches n'ont pas leur champ `notes`. Ordre : tâches ouvertes avant les terminées, puis échéance croissante (sans échéance en dernier), priorité (`high`, `normal`, `low`), date de création, id. Une tâche comporte `id` (`t_` + 6 caractères), `title`, `status`, `priority`, `due`, `project`, `tags`, `created_at`, `updated_at` et `completed_at` (les champs vides sont omis, `tags` vaut `[]`).
+Les filtres se combinent (ET). Réponse : `{"tasks":[…],"truncated":true}` ; `truncated` n'apparaît que si plus de `max_results` tâches correspondent, et `tasks` vaut `[]` quand rien ne correspond. Les tâches n'ont pas leur champ `notes` : `get_task` les donne. Ordre : tâches ouvertes avant les terminées, puis échéance croissante (sans échéance en dernier), priorité (`high`, `normal`, `low`), date de création, id. Une tâche comporte `id` (`t_` + 6 caractères), `title`, `status`, `priority`, `due`, `project`, `tags`, `created_at`, `updated_at` et `completed_at` (les champs vides sont omis, `tags` vaut `[]`).
+
+### `get_task`
+
+Paramètre obligatoire `id` (`t_` + 6 caractères, majuscules acceptées). Réponse : `{"task":{…}}` avec tous les champs, `notes` comprises. Erreurs : `id is required` si absent, `id must be text` si ce n'est pas du texte, et une erreur qui renvoie vers `list_tasks` si aucune tâche n'a cet id.
