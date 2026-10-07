@@ -2,7 +2,7 @@
 
 Serveur MCP (transport stdio) qui donne à un assistant IA un gestionnaire de tâches et de projets simple, pour un seul utilisateur. Les données sont stockées dans un fichier JSON. Le serveur n'utilise pas le réseau.
 
-> État : squelette. Le serveur démarre et vérifie sa configuration, mais n'expose pas encore d'outil (voir les issues du dépôt).
+> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects` et `list_tasks` (voir les issues du dépôt pour la suite).
 
 ## Compilation
 
@@ -39,3 +39,23 @@ Au démarrage, le dossier du fichier de données est créé s'il manque (droits 
 ## Écritures concurrentes
 
 Plusieurs processus `tasks-mcp` peuvent écrire le même fichier de données : chaque écriture prend un verrou (`<data_file>.lock`, avec une garde `<data_file>.lock.break`), relit le fichier, le modifie puis le remplace de façon atomique. Les lectures ne prennent pas le verrou. Un verrou abandonné par un processus mort est repris après 30 secondes ; en attendant, les écritures échouent au bout de `lock_timeout_seconds` (réglage appliqué au câblage du Store aux outils). Ces fichiers `.lock` ne doivent pas être supprimés à la main pendant que le serveur tourne. Voir `docs/adr/0001-portable-lock-file.md`.
+
+## Outils
+
+Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans jamais citer de contenu de tâche. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false`. Les descriptions destinées à l'assistant sont en anglais.
+
+### `list_projects`
+
+Aucun paramètre. Réponse : `{"projects":[{"id":"p_k3x9aq","name":"Home","description":"…","created_at":"2026-07-14T09:30:00+02:00"}]}`, triés par nom (sans tenir compte de la casse), puis par id. `description` n'apparaît que si elle existe. Aucun projet : `{"projects":[]}`.
+
+### `list_tasks`
+
+| Paramètre | Rôle |
+|---|---|
+| `project` | Id d'un projet (`p_` + 6 caractères) ; une erreur si le projet n'existe pas. |
+| `status` | `todo`, `doing` ou `done`. `done` fonctionne sans `include_done`. |
+| `due_before` | Jour `AAAA-MM-JJ`, inclus ; les tâches sans échéance sont exclues. |
+| `tag` | Tag, sans tenir compte de la casse. |
+| `include_done` | Booléen, `false` par défaut : sans lui (et sans `status`), les tâches terminées sont omises. |
+
+Les filtres se combinent (ET). Réponse : `{"tasks":[…],"truncated":true}` ; `truncated` n'apparaît que si plus de `max_results` tâches correspondent, et `tasks` vaut `[]` quand rien ne correspond. Les tâches n'ont pas leur champ `notes`. Ordre : tâches ouvertes avant les terminées, puis échéance croissante (sans échéance en dernier), priorité (`high`, `normal`, `low`), date de création, id. Une tâche comporte `id` (`t_` + 6 caractères), `title`, `status`, `priority`, `due`, `project`, `tags`, `created_at`, `updated_at` et `completed_at` (les champs vides sont omis, `tags` vaut `[]`).
