@@ -87,16 +87,16 @@ func TestTools_List(t *testing.T) {
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
 		a := tool.Annotations
-		writes := tool.Name == "create_project" || tool.Name == "add_task"
+		writes := slices.Contains([]string{"create_project", "add_task", "update_task", "complete_task"}, tool.Name)
 		if a.ReadOnly == nil || *a.ReadOnly == writes || a.Destructive == nil || *a.Destructive || a.OpenWorld == nil || *a.OpenWorld {
 			t.Errorf("%s: annotations = %+v, want readOnly %v, destructive false, openWorld false (all explicit)", tool.Name, a, !writes)
 		}
-		if want := map[string][]string{"create_project": {"name"}, "add_task": {"title"}}[tool.Name]; want != nil && !slices.Equal(tool.InputSchema.Required, want) {
+		if want := map[string][]string{"create_project": {"name"}, "add_task": {"title"}, "update_task": {"id"}, "complete_task": {"id"}}[tool.Name]; want != nil && !slices.Equal(tool.InputSchema.Required, want) {
 			t.Errorf("%s required = %v, want %v", tool.Name, tool.InputSchema.Required, want)
 		}
-		if tool.Name == "add_task" {
+		if tool.Name == "add_task" || tool.Name == "update_task" {
 			if enum, _ := tool.InputSchema.Properties["priority"]["enum"].([]any); len(enum) != 3 || tool.InputSchema.Properties["tags"]["type"] != "array" {
-				t.Errorf("add_task priority enum = %v, tags = %v, want three priorities and a list", enum, tool.InputSchema.Properties["tags"])
+				t.Errorf("%s priority enum = %v, tags = %v, want three priorities and a list", tool.Name, enum, tool.InputSchema.Properties["tags"])
 			}
 		}
 		if enum, _ := tool.InputSchema.Properties["status"]["enum"].([]any); tool.Name == "list_tasks" && len(enum) != 3 {
@@ -109,8 +109,8 @@ func TestTools_List(t *testing.T) {
 			t.Error("list_tasks does not point to get_task for the notes")
 		}
 	}
-	if slices.Sort(names); !slices.Equal(names, []string{"add_task", "create_project", "get_task", "list_projects", "list_tasks"}) {
-		t.Errorf("tools = %v, want the five tools", names)
+	if slices.Sort(names); !slices.Equal(names, []string{"add_task", "complete_task", "create_project", "get_task", "list_projects", "list_tasks", "update_task"}) {
+		t.Errorf("tools = %v, want the seven tools", names)
 	}
 }
 

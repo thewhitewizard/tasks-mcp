@@ -56,6 +56,23 @@ func newServer(cfg Config, store Store, clock func() time.Time) *server.MCPServe
 		mcp.WithString("priority", mcp.Enum(string(PriorityLow), string(PriorityNormal), string(PriorityHigh)), mcp.Description("Optional, default normal.")),
 		mcp.WithArray("tags", mcp.WithStringItems(), mcp.Description("Optional short labels (at most 10, 30 characters each), lowercased when saved.")),
 	), h.addTask)
+	s.AddTool(mcp.NewTool("update_task", writer(),
+		mcp.WithDescription("Change some fields of a task; the fields you leave out stay as they are. An empty string clears notes, due and project; tags replace the old list (an empty list clears it). "+
+			"title, status and priority cannot be cleared. Setting status to done records the completion; any other status removes it. "+
+			"Returns the whole updated task, e.g. {\"task\":{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",\"status\":\"doing\",...}}. Give at least one field."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
+		mcp.WithString("title", mcp.Description("New title, at most 200 characters; it cannot be empty.")),
+		mcp.WithString("notes", mcp.Description("New notes, at most 2000 characters; empty to clear.")),
+		mcp.WithString("status", mcp.Enum(string(StatusTodo), string(StatusDoing), string(StatusDone)), mcp.Description("New status; it cannot be empty.")),
+		mcp.WithString("priority", mcp.Enum(string(PriorityLow), string(PriorityNormal), string(PriorityHigh)), mcp.Description("New priority; it cannot be empty.")),
+		mcp.WithString("due", mcp.Description("New due day, e.g. 2026-07-25 (YYYY-MM-DD); empty to clear.")),
+		mcp.WithString("project", mcp.Description("New project id from list_projects (p_ followed by 6 characters); empty to remove the task from its project.")),
+		mcp.WithArray("tags", mcp.WithStringItems(), mcp.Description("The new tags, replacing the old ones (at most 10, 30 characters each); an empty list clears them.")),
+	), h.updateTask)
+	s.AddTool(mcp.NewTool("complete_task", writer(),
+		mcp.WithDescription("Mark a task as done and record when. Safe to repeat: a task that is already done is returned unchanged. Returns the whole task, e.g. {\"task\":{\"id\":\"t_a4c7mz\",\"status\":\"done\",\"completed_at\":\"2026-07-14T09:30:00+02:00\",...}}."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks or add_task: t_ followed by 6 characters.")),
+	), h.completeTask)
 	return s
 }
 
@@ -74,8 +91,11 @@ func hints(readOnly bool) mcp.ToolOption {
 	}
 }
 
-// unknownProject is the answer to a project id that matches nothing.
-const unknownProject = "project: no project with this id; list_projects gives the ids"
+// What the assistant is told when an id matches nothing.
+const (
+	unknownProject = "project: no project with this id; list_projects gives the ids"
+	unknownTask    = "id: no task with this id; list_tasks gives the ids"
+)
 
 // handlers are the tool handlers, with what they need.
 type handlers struct {
@@ -205,23 +225,41 @@ func stringArg(req mcp.CallToolRequest, name string) (string, error) {
 }
 
 func (h *handlers) getTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	id, err := stringArg(req, "id")
+	id, err := taskID(req)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
-	}
-	if id == "" {
-		return mcp.NewToolResultError("id is required"), nil
 	}
 	task, err := h.store.GetTask(id)
-	if errors.Is(err, ErrNotFound) {
-		return mcp.NewToolResultError("id: no task with this id; list_tasks gives the ids"), nil
-	}
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return storeError(err), nil
 	}
-	return jsonResult(struct {
-		Task Task `json:"task"`
-	}{task}), nil
+	return taskResult(task), nil
+}
+
+// taskResult answers with the task.
+func taskResult(task Task) *mcp.CallToolResult {
+	return jsonResult(map[string]Task{"task": task})
+}
+
+// taskID returns the id argument, which every task tool requires.
+func taskID(req mcp.CallToolRequest) (string, error) {
+	id, err := stringArg(req, "id")
+	if err == nil && id == "" {
+		err = errors.New("id is required")
+	}
+	return id, err
+}
+
+// storeError is the answer to a failed Store call: the assistant gets the
+// message that tells it what to do, or else the Store's own.
+func storeError(err error) *mcp.CallToolResult {
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return mcp.NewToolResultError(unknownTask)
+	case errors.Is(err, ErrInvalidProject):
+		return mcp.NewToolResultError(unknownProject)
+	}
+	return mcp.NewToolResultError(err.Error())
 }
 
 // textArgs returns the text arguments names, in that order.
@@ -287,13 +325,59 @@ func (h *handlers) addTask(_ context.Context, req mcp.CallToolRequest) (*mcp.Cal
 	if err == nil {
 		task, err = h.store.CreateTask(task)
 	}
-	if errors.Is(err, ErrInvalidProject) {
-		return mcp.NewToolResultError(unknownProject), nil
+	if err != nil {
+		return storeError(err), nil
 	}
+	return taskResult(task), nil
+}
+
+// optText returns the text argument name, trimmed, or nil when it is absent or null.
+func optText(req mcp.CallToolRequest, name string) (*string, error) {
+	if req.GetArguments()[name] == nil {
+		return nil, nil
+	}
+	s, err := stringArg(req, name)
+	return &s, err
+}
+
+func (h *handlers) updateTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := taskID(req)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	return jsonResult(struct {
-		Task Task `json:"task"`
-	}{task}), nil
+	var u TaskUpdate
+	for _, f := range []struct {
+		name string
+		dst  **string
+	}{{"title", &u.Title}, {"notes", &u.Notes}, {"status", &u.Status}, {"priority", &u.Priority}, {"due", &u.Due}, {"project", &u.Project}} {
+		if *f.dst, err = optText(req, f.name); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+	}
+	if u.Tags, err = stringsArg(req, "tags"); err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if u.isEmpty() {
+		return mcp.NewToolResultError("nothing to update: give at least one of title, notes, status, priority, due, project, tags"), nil
+	}
+	task, err := h.store.UpdateTask(id, func(t *Task) error { return u.apply(t, h.now()) })
+	if err != nil {
+		return storeError(err), nil
+	}
+	return taskResult(task), nil
+}
+
+func (h *handlers) completeTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := taskID(req)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	task, err := h.store.UpdateTask(id, func(t *Task) error {
+		t.setStatus(StatusDone, h.now())
+		return nil
+	})
+	if err != nil {
+		return storeError(err), nil
+	}
+	return taskResult(task), nil
 }
