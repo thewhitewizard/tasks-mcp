@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -325,5 +326,20 @@ func TestStore_RefusedCreationLeavesTheFileAlone(t *testing.T) {
 	}
 	if after := mustRead(t, s); after != before {
 		t.Error("a creation refused by ErrLimit modified the Data file")
+	}
+}
+
+func TestFileError_GivesNoPath(t *testing.T) {
+	t.Parallel()
+
+	for name, err := range map[string]error{
+		"an open or write failure":  &fs.PathError{Op: "open", Path: "/secret/tasks.json", Err: os.ErrPermission},
+		"a failed final rename":     &os.LinkError{Op: "rename", Old: "/secret/.tasks-1.tmp", New: "/secret/tasks.json", Err: os.ErrPermission},
+		"the same, already wrapped": fmt.Errorf("again: %w", &os.LinkError{Op: "rename", Old: "/secret/a", New: "/secret/b", Err: os.ErrPermission}),
+	} {
+		got := fileError("data file", err)
+		if strings.Contains(got.Error(), "secret") || !errors.Is(got, os.ErrPermission) {
+			t.Errorf("%s: fileError = %q, want the cause without any path", name, got)
+		}
 	}
 }

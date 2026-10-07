@@ -112,8 +112,8 @@ type handlers struct {
 	location   *time.Location
 }
 
-// now is the time of the call, in the configured timezone.
-func (h *handlers) now() time.Time { return h.clock().In(h.location) }
+// now is the time of the call, in the configured timezone, in whole seconds.
+func (h *handlers) now() time.Time { return h.clock().In(h.location).Truncate(time.Second) }
 
 // jsonResult answers with compact JSON text.
 func jsonResult(v any) *mcp.CallToolResult {
