@@ -25,7 +25,7 @@ func newServer(cfg Config, store Store) *server.MCPServer {
 	), h.listProjects)
 	s.AddTool(mcp.NewTool("list_tasks", readOnly(),
 		mcp.WithDescription("List tasks, open ones first, then by due date (earliest first, no due date last), priority (high first) and creation. "+
-			"Filters combine (AND). By default done tasks are left out. Notes are not included. "+
+			"Filters combine (AND). By default done tasks are left out. Notes are not included: call get_task for them. "+
 			"At most "+strconv.Itoa(cfg.MaxResults)+" tasks are returned; `truncated` is true when there were more (it is absent otherwise), so narrow the filters. "+
 			"Example answer: {\"tasks\":[{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",\"status\":\"todo\",\"priority\":\"high\",\"due\":\"2026-07-18\",\"tags\":[\"home\"],...}]}. due_before 2026-07-20 gives what is due by that day, that day included."),
 		mcp.WithString("project", mcp.Description("Only this project: its id from list_projects (p_ followed by 6 characters).")),
@@ -34,6 +34,11 @@ func newServer(cfg Config, store Store) *server.MCPServer {
 		mcp.WithString("tag", mcp.Description("Only tasks with this tag (not case sensitive).")),
 		mcp.WithBoolean("include_done", mcp.Description("Also list done tasks. Default: false.")),
 	), h.listTasks)
+	s.AddTool(mcp.NewTool("get_task", readOnly(),
+		mcp.WithDescription("Get one task with all its fields, notes included. Dates are YYYY-MM-DD (due) or ISO 8601 with offset (the others). "+
+			"Example answer: {\"task\":{\"id\":\"t_a4c7mz\",\"title\":\"Pay rent\",\"notes\":\"Transfer before the 20th\",\"status\":\"todo\",\"priority\":\"high\",\"due\":\"2026-07-18\",\"tags\":[\"home\"],...}}."),
+		mcp.WithString("id", mcp.Required(), mcp.Description("The task id from list_tasks: t_ followed by 6 characters, e.g. t_a4c7mz.")),
+	), h.getTask)
 	return s
 }
 
@@ -127,7 +132,7 @@ func (h *handlers) listTasks(_ context.Context, req mcp.CallToolRequest) (*mcp.C
 			tag != "" && !slices.ContainsFunc(task.Tags, func(t string) bool { return strings.EqualFold(t, tag) }):
 			continue
 		}
-		task.Notes = "" // the list leaves the notes out
+		task.Notes = "" // get_task gives the notes
 		result.Tasks = append(result.Tasks, task)
 	}
 	slices.SortFunc(result.Tasks, compareTasks)
@@ -170,4 +175,24 @@ func stringArg(req mcp.CallToolRequest, name string) (string, error) {
 		return "", errors.New(name + " must be text")
 	}
 	return strings.TrimSpace(s), nil
+}
+
+func (h *handlers) getTask(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := stringArg(req, "id")
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	if id == "" {
+		return mcp.NewToolResultError("id is required"), nil
+	}
+	task, err := h.store.GetTask(id)
+	if errors.Is(err, ErrNotFound) {
+		return mcp.NewToolResultError("id: no task with this id; list_tasks gives the ids"), nil
+	}
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+	return jsonResult(struct {
+		Task Task `json:"task"`
+	}{task}), nil
 }

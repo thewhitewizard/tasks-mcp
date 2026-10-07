@@ -65,12 +65,14 @@ func TestTools_List(t *testing.T) {
 	var listed struct {
 		Tools []struct {
 			Name        string `json:"name"`
+			Description string `json:"description"`
 			Annotations struct {
 				ReadOnly    *bool `json:"readOnlyHint"`
 				Destructive *bool `json:"destructiveHint"`
 				OpenWorld   *bool `json:"openWorldHint"`
 			} `json:"annotations"`
 			InputSchema struct {
+				Required   []string                  `json:"required"`
 				Properties map[string]map[string]any `json:"properties"`
 			} `json:"inputSchema"`
 		} `json:"tools"`
@@ -89,9 +91,15 @@ func TestTools_List(t *testing.T) {
 		if enum, _ := tool.InputSchema.Properties["status"]["enum"].([]any); tool.Name == "list_tasks" && len(enum) != 3 {
 			t.Errorf("list_tasks status enum = %v, want the three statuses", enum)
 		}
+		if tool.Name == "get_task" && !slices.Equal(tool.InputSchema.Required, []string{"id"}) {
+			t.Errorf("get_task required = %v, want [id]", tool.InputSchema.Required)
+		}
+		if tool.Name == "list_tasks" && !strings.Contains(tool.Description, "get_task") {
+			t.Error("list_tasks does not point to get_task for the notes")
+		}
 	}
-	if slices.Sort(names); !slices.Equal(names, []string{"list_projects", "list_tasks"}) {
-		t.Errorf("tools = %v, want list_projects, list_tasks", names)
+	if slices.Sort(names); !slices.Equal(names, []string{"get_task", "list_projects", "list_tasks"}) {
+		t.Errorf("tools = %v, want get_task, list_projects, list_tasks", names)
 	}
 }
 
@@ -283,5 +291,49 @@ func TestTools_UnusableDataFile(t *testing.T) {
 		if text, isErr := callTool(t, srv, name, nil); !isErr || !strings.Contains(text, "corrupt") {
 			t.Errorf("%s = %q (error %v), want an error about the corrupt data file", name, text, isErr)
 		}
+	}
+}
+
+func TestGetTask(t *testing.T) {
+	t.Parallel()
+
+	srv, store := newTestServer(t, 50)
+	seedTasks(t, store)
+	all, err := store.ListTasks()
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := all[slices.IndexFunc(all, func(task Task) bool { return task.Title == "write report" })] // the only seeded task with notes
+
+	text, isErr := callTool(t, srv, "get_task", map[string]any{"id": strings.ToUpper(report.ID)})
+	var got struct {
+		Task Task `json:"task"`
+	}
+	if err := json.Unmarshal([]byte(text), &got); isErr || err != nil {
+		t.Fatalf("get_task = %q (error %v, %v)", text, isErr, err)
+	}
+	sameJSON(t, got.Task, report)
+	if got.Task.Notes != "quarterly" {
+		t.Errorf("notes = %q, want them in get_task", got.Task.Notes)
+	}
+
+	for name, tt := range map[string]struct {
+		args map[string]any
+		want string
+	}{
+		"no id":              {nil, "id is required"},
+		"unknown id":         {map[string]any{"id": "t_secret2"}, "list_tasks"},
+		"id of a wrong type": {map[string]any{"id": 5}, "id must be text"},
+	} {
+		if text, isErr := callTool(t, srv, "get_task", tt.args); !isErr || !strings.Contains(text, tt.want) || strings.Contains(text, "secret2") {
+			t.Errorf("%s: get_task = %q (error %v), want an error with %q, not repeating the id", name, text, isErr, tt.want)
+		}
+	}
+
+	if err := os.WriteFile(store.path, []byte("{not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if text, isErr := callTool(t, srv, "get_task", map[string]any{"id": report.ID}); !isErr || !strings.Contains(text, "corrupt") {
+		t.Errorf("get_task on a corrupt file = %q (error %v), want the store's error", text, isErr)
 	}
 }
