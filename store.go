@@ -274,6 +274,7 @@ func (s *jsonStore) UpdateTask(id string, fn func(*Task) error) (Task, error) {
 			return err
 		}
 		candidate := doc.Tasks[i]
+		candidate.Tags = slices.Clone(candidate.Tags) // fn gets a copy, not the stored slice
 		if err := fn(&candidate); err != nil {
 			return err
 		}
@@ -285,7 +286,10 @@ func (s *jsonStore) UpdateTask(id string, fn func(*Task) error) (Task, error) {
 		updated = candidate
 		return nil
 	})
-	return updated, err
+	if err != nil {
+		return Task{}, err
+	}
+	return updated, nil
 }
 
 func (s *jsonStore) DeleteTask(id string) error {

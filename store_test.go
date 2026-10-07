@@ -263,22 +263,23 @@ func TestStore_UpdateTask(t *testing.T) {
 
 	before := mustRead(t, s)
 	boom := errors.New("boom")
-	refused := map[string]struct {
+	refused := []struct {
+		name string
 		id   string
 		fn   func(*Task) error
 		want error
 	}{
-		"fn fails":        {created.ID, func(*Task) error { return boom }, boom},
-		"unknown project": {created.ID, func(task *Task) error { task.Project = "p_nope22"; return nil }, ErrInvalidProject},
-		"unknown task":    {"t_nope22", func(*Task) error { return nil }, ErrNotFound},
+		{"fn fails", created.ID, func(*Task) error { return boom }, boom},
+		{"unknown project", created.ID, func(task *Task) error { task.Project = "p_nope22"; return nil }, ErrInvalidProject},
+		{"unknown task", "t_nope22", func(*Task) error { return nil }, ErrNotFound},
 	}
-	for name, tt := range refused {
+	for _, tt := range refused {
 		got, err := s.UpdateTask(tt.id, tt.fn)
 		if !errors.Is(err, tt.want) || got.ID != "" {
-			t.Errorf("%s: got %+v (%v), want a zero Task and %v", name, got, err, tt.want)
+			t.Errorf("%s: got %+v (%v), want a zero Task and %v", tt.name, got, err, tt.want)
 		}
 		if after := mustRead(t, s); after != before {
-			t.Errorf("%s: the Data file changed", name)
+			t.Errorf("%s: the Data file changed", tt.name)
 		}
 	}
 }
@@ -287,22 +288,25 @@ func TestStore_DeleteTask(t *testing.T) {
 	t.Parallel()
 
 	s := newTestStore(t, 10)
-	keep, _ := s.CreateTask(sampleTask(t, "Keep", ""))
-	drop, err := s.CreateTask(sampleTask(t, "Drop", ""))
-	if err != nil {
-		t.Fatal(err)
+	keep, err1 := s.CreateTask(sampleTask(t, "Keep", ""))
+	drop, err2 := s.CreateTask(sampleTask(t, "Drop", ""))
+	if err1 != nil || err2 != nil {
+		t.Fatal(err1, err2)
 	}
 
 	if err := s.DeleteTask(strings.ToUpper(drop.ID)); err != nil {
 		t.Fatalf("DeleteTask: %v", err)
 	}
-	if left, _ := s.ListTasks(); len(left) != 1 || left[0].ID != keep.ID {
-		t.Errorf("tasks left = %v, want only %s", left, keep.ID)
+	if left, err := s.ListTasks(); err != nil || len(left) != 1 || left[0].ID != keep.ID {
+		t.Errorf("tasks left = %v (%v), want only %s", left, err, keep.ID)
 	}
 	for _, id := range []string{drop.ID, "t_nope22"} {
 		if err := s.DeleteTask(id); !errors.Is(err, ErrNotFound) {
 			t.Errorf("DeleteTask(%s) = %v, want ErrNotFound", id, err)
 		}
+	}
+	if err := s.DeleteTask(keep.ID); err != nil || !strings.Contains(mustRead(t, s), `"tasks": []`) {
+		t.Errorf("deleting the last task: %v, want an empty list in the file, not null", err)
 	}
 }
 

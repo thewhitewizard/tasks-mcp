@@ -41,6 +41,7 @@ func loadConfig(path string) (Config, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("config: parse: %w", err)
 	}
+	// A second Decode, not dec.More(), which lets a stray "}" or "]" through.
 	if dec.Decode(&struct{}{}) != io.EOF {
 		return Config{}, errors.New("config: parse: unexpected data after the JSON object")
 	}
