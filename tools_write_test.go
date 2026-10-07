@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"maps"
 	"slices"
 	"strings"
@@ -256,9 +257,41 @@ func TestDeleteTask(t *testing.T) {
 	if left, _ := listTasks(t, f.srv, nil); !slices.Equal(titles(left.Tasks), []string{"Keep me"}) {
 		t.Errorf("tasks left = %v, want only Keep me", titles(left.Tasks))
 	}
-	for name, args := range map[string]map[string]any{"already deleted": {"id": f.task.ID}, "unknown id": {"id": "t_secret2"}, "no id": nil} {
-		if text, isErr := callTool(t, f.srv, "delete_task", args); !isErr || strings.Contains(text, "secret2") {
-			t.Errorf("%s: delete_task = %q (error %v), want an error without the id", name, text, isErr)
+	if gone.Deleted.Notes != "before the 20th" {
+		t.Errorf("deleted notes = %q, want the whole task back", gone.Deleted.Notes)
+	}
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"already deleted", map[string]any{"id": f.task.ID}, "list_tasks"},
+		{"unknown id", map[string]any{"id": "t_secret2"}, "list_tasks"},
+		{"no id", nil, "id is required"},
+		{"blank id", map[string]any{"id": "  "}, "id is required"},
+		{"id of a wrong type", map[string]any{"id": 5}, "id must be text"},
+	}
+	for _, tt := range tests {
+		if text, isErr := callTool(t, f.srv, "delete_task", tt.args); !isErr || !strings.Contains(text, tt.want) || strings.Contains(text, "secret2") {
+			t.Errorf("%s: delete_task = %q (error %v), want an error with %q, without the id", tt.name, text, isErr, tt.want)
 		}
+	}
+}
+
+func TestDeleteTask_TwoProcessesOneWins(t *testing.T) {
+	t.Parallel()
+
+	f := newWriteFixture(t)
+	results := make(chan error, 2)
+	for range 2 {
+		go func() { // each with its own store on the same file, like two processes
+			_, err := newJSONStore(f.store.path, 10, 20*time.Second).DeleteTask(f.task.ID)
+			results <- err
+		}()
+	}
+	first, second := <-results, <-results
+	if (first == nil) == (second == nil) || (first != nil && !errors.Is(first, ErrNotFound)) || (second != nil && !errors.Is(second, ErrNotFound)) {
+		t.Errorf("deletions answered %v and %v, want exactly one success and one ErrNotFound", first, second)
 	}
 }
