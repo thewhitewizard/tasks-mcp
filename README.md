@@ -2,7 +2,7 @@
 
 Serveur MCP (transport stdio) qui donne à un assistant IA un gestionnaire de tâches et de projets simple, pour un seul utilisateur. Les données sont stockées dans un fichier JSON. Le serveur n'utilise pas le réseau.
 
-> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects`, `list_tasks` et `get_task`, et d'écriture `create_project`, `add_task`, `update_task`, `complete_task` et `delete_task` (voir les issues du dépôt pour la suite).
+> État : en construction. Le serveur expose pour l'instant les outils de lecture `list_projects`, `list_tasks` et `get_task`, et d'écriture `create_project`, `add_task`, `update_task` et `complete_task` (voir les issues du dépôt pour la suite).
 
 ## Compilation
 
@@ -42,7 +42,7 @@ Plusieurs processus `tasks-mcp` peuvent écrire le même fichier de données : c
 
 ## Outils
 
-Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`, sauf `delete_task`, le seul avec `destructiveHint: true`. Les horodatages sont écrits dans le fuseau de la configuration. Un argument facultatif à `null` est traité comme absent ; un argument d'un autre type que celui attendu est une erreur. Les messages d'erreur ne donnent jamais le chemin du fichier de données. Les descriptions destinées à l'assistant sont en anglais.
+Les réponses sont du JSON compact. Les erreurs métier sont renvoyées comme résultats d'outil en erreur, sans répéter les valeurs fournies. Les outils de lecture sont déclarés `readOnlyHint: true`, `destructiveHint: false`, `openWorldHint: false` ; les outils d'écriture `readOnlyHint: false`, `destructiveHint: false`, `openWorldHint: false`. Les horodatages sont écrits dans le fuseau de la configuration. Un argument facultatif à `null` est traité comme absent ; un argument d'un autre type que celui attendu est une erreur. Les messages d'erreur ne donnent jamais le chemin du fichier de données. Les descriptions destinées à l'assistant sont en anglais.
 
 ### `list_projects`
 
@@ -95,7 +95,3 @@ Paramètres : `id` (obligatoire) et, facultatifs, `title`, `notes`, `status`, `p
 ### `complete_task`
 
 Paramètre : `id`. Passe la tâche à `done` et renseigne `completed_at`. Répétable sans effet : une tâche déjà terminée est renvoyée telle quelle, `completed_at` et `updated_at` inchangés.
-
-### `delete_task`
-
-Paramètre : `id`. Supprime la tâche définitivement et renvoie `{"deleted":{…}}`, la tâche supprimée. C'est le seul outil destructeur.
